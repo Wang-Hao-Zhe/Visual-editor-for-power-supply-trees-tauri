@@ -44,6 +44,12 @@ svg.lines{position:absolute;inset:0;overflow:visible;pointer-events:none}
   background:var(--head);margin-right:4px}
 .node.bad{border-color:var(--bad);background:rgba(220,38,38,.09)}
 .node.warn{border-color:var(--warn);background:rgba(217,119,6,.09)}
+@keyframes ptFlash{
+  0%{box-shadow:0 0 0 0 rgba(37,99,235,.85)}
+  70%{box-shadow:0 0 0 15px rgba(37,99,235,0)}
+  100%{box-shadow:0 0 0 0 rgba(37,99,235,0)}
+}
+.node.flash{animation:ptFlash .85s ease-out 2}
 aside{width:312px;flex-shrink:0;background:var(--panel);border-left:1px solid var(--border);
   overflow:auto;padding:12px}
 aside h3{font-size:13px;margin:0 0 10px}
@@ -125,7 +131,7 @@ function defaultData(){
   ];
 }
 
-let data=load(), sel=null, secIdx=-1;
+let data=load(), sel=null, secIdx=-1, flashNode=null;
 function load(){
   try{const s=localStorage.getItem(KEY); if(s){const d=JSON.parse(s); if(d&&d.sections)return d;}}catch(e){}
   return {sections:defaultData(), theme:null};
@@ -190,7 +196,8 @@ function render(){
       // draw
       (function draw(n){
         const el=document.createElement('div');
-        el.className='node '+status(n)+(sel===n?' sel':'');
+        el._nodeRef=n;
+        el.className='node '+status(n)+(sel===n?' sel':'')+(flashNode===n?' flash':'');
         el.style.left=(n._d*COL)+'px';
         el.style.top=n._y+'px';
         let info=[];
@@ -225,6 +232,34 @@ function render(){
 }
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
 
+// ---- 高亮 + 自动滚到该节点（横向瀑布布局下，新节点常落在可视区之外）----
+function flashTo(n){
+  flashNode=n;
+  render();
+  if(!n) return;
+  const cv=document.getElementById('canvas');
+  let hit=null;
+  (function walk(e){
+    if(hit) return;
+    if(e._nodeRef===n){hit=e; return;}
+    (e.children?Array.from(e.children):[]).forEach(walk);
+  })(cv);
+  if(hit&&hit.scrollIntoView) hit.scrollIntoView({behavior:'smooth',block:'center',inline:'center'});
+  setTimeout(()=>{ if(flashNode===n) flashNode=null; },1900);
+}
+// 返回 null = 它本身就是根；返回 undefined = 没找到
+function findParent(arr,target){
+  let found=false, res=null;
+  (function walk(list,parent){
+    for(const n of list){
+      if(n===target){found=true; res=parent; return true;}
+      if(walk(n.children||[],n)) return true;
+    }
+    return false;
+  })(arr||[],null);
+  return found?res:undefined;
+}
+
 function renderPanel(){
   const p=document.getElementById('panel');
   if(!sel){
@@ -253,6 +288,7 @@ function renderPanel(){
    '<div class="f"><label>备注</label><textarea id="fN">'+esc(sel.note)+'</textarea></div>'+
    '<div class="ops">'+
      '<button id="bAdd">+ 子节点</button>'+
+     '<button id="bRoot">设为起点</button>'+
      '<button id="bDel">删除（含子树）</button>'+
    '</div>'+
    '<div class="legend">额定电流填 99 表示不受限。<br>修改即时生效并自动保存到本机。</div>';
@@ -270,20 +306,35 @@ function renderPanel(){
   document.getElementById('bAdd').onclick=()=>{
     const c=N({label:'新子节点'});
     (sel.children=sel.children||[]).push(c);
-    sel=c; save(); render();
+    sel=c; save(); flashTo(c);
+  };
+  document.getElementById('bRoot').onclick=()=>{
+    const sec=data.sections[secIdx];
+    if(!sec||!sel) return;
+    const p=findParent(sec.roots,sel);
+    if(p===undefined){ alert('找不到这个节点所在的分区，请刷新后重试。'); return; }
+    if(p===null){ alert('「'+sel.label+'」已经是起点了。'); return; }
+    // 从原来的父节点摘下来，提升为该分区的一个独立起点
+    p.children=(p.children||[]).filter(x=>x!==sel);
+    sec.roots.push(sel);
+    save(); flashTo(sel);
   };
   document.getElementById('bDel').onclick=()=>{
     if(!confirm('删除「'+sel.label+'」及其所有子节点？')) return;
     const sec=data.sections[secIdx];
+    const target=sel;
+    const parent=findParent(sec&&sec.roots,target);
     const rm=(arr)=>{
       for(let i=0;i<arr.length;i++){
-        if(arr[i]===sel){arr.splice(i,1);return true;}
+        if(arr[i]===target){arr.splice(i,1);return true;}
         if(arr[i].children&&rm(arr[i].children)) return true;
       }
       return false;
     };
     if(sec&&sec.roots) rm(sec.roots);
-    sel=null; save(); render();
+    // 删完滚回父节点（如果它还有父），让用户看得见刚才发生了什么
+    sel=(parent===null||parent===undefined)?null:parent;
+    save(); flashTo(sel);
   };
 }
 
