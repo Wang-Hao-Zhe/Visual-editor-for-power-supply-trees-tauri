@@ -232,10 +232,24 @@ function render(){
 }
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
 
+// ---- 渲染刷新 ----
+// render() 只是改 DOM。少数情况下浏览器不会立刻把改动画到屏幕上（例如刚刚整块
+// 重建过面板、或合成层没跟上），画面看着像"没反应"。这里在 render() 之后显式
+// 强制一次回流，并把兜底刷新放到下一帧，保证增删改一定看得见。
+function refresh(){
+  render();
+  const cv=document.getElementById('canvas');
+  if(cv) void cv.offsetHeight;            // 读布局属性 = 强制回流
+  requestAnimationFrame(()=>{
+    const c=document.getElementById('canvas');
+    if(c) void c.offsetHeight;            // 下一帧再兜一次
+  });
+}
+
 // ---- 高亮 + 自动滚到该节点（横向瀑布布局下，新节点常落在可视区之外）----
 function flashTo(n){
   flashNode=n;
-  render();
+  refresh();
   if(!n) return;
   const cv=document.getElementById('canvas');
   let hit=null;
@@ -342,7 +356,7 @@ document.getElementById('btnAddSec').onclick=()=>{
   const nm=prompt('新分区名称：','新分区');
   if(!nm) return;
   data.sections.push({name:nm, roots:[N({label:'起点'})]});
-  save(); render();
+  save(); refresh();
 };
 document.getElementById('btnExport').onclick=()=>{
   const b=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
@@ -355,13 +369,13 @@ document.getElementById('btnImport').onclick=()=>document.getElementById('fileIn
 document.getElementById('fileIn').onchange=e=>{
   const f=e.target.files[0]; if(!f) return;
   const rd=new FileReader();
-  rd.onload=()=>{ try{ data=JSON.parse(rd.result); sel=null; save(); render(); alert('导入成功'); }
+  rd.onload=()=>{ try{ data=JSON.parse(rd.result); sel=null; save(); refresh(); alert('导入成功'); }
                   catch(err){ alert('文件格式不对：'+err.message); } };
   rd.readAsText(f);
 };
 document.getElementById('btnReset').onclick=()=>{
   if(!confirm('恢复到示例电源树？当前所有修改会丢失。')) return;
-  data={sections:defaultData(), theme:data&&data.theme}; sel=null; save(); render();
+  data={sections:defaultData(), theme:data&&data.theme}; sel=null; save(); refresh();
 };
 document.getElementById('btnTheme').onclick=()=>{
   const t=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';
