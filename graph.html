@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>电源树编辑器 · 连线版</title>
+<style>
+:root{
+  --bg:#f5f6f8; --panel:#fff; --card:#fff; --text:#1c1f23; --muted:#6b7280;
+  --border:#d8dce3; --accent:#2563eb; --ok:#16a34a; --warn:#d97706; --bad:#dc2626;
+  --node-bg:#fff; --head:#eef2f7; --wire:#333; --dot:#c9d0da;
+  --t-source:#2563eb; --t-converter:#16a34a; --t-connector:#d97706; --t-device:#7c3aed; --t-load:#0891b2;
+}
+html[data-theme="dark"]{
+  --bg:#12161c; --panel:#1a1f27; --card:#1e242e; --text:#e6ebf2; --muted:#93a1b3;
+  --border:#2c3542; --accent:#60a5fa; --node-bg:#202834; --head:#27303c; --wire:#9fb3c8; --dot:#2a3340;
+  --t-source:#60a5fa; --t-converter:#4ade80; --t-connector:#fbbf24; --t-device:#c084fc; --t-load:#22d3ee;
+}
+*{box-sizing:border-box}
+body{margin:0;height:100vh;display:flex;flex-direction:column;overflow:hidden;
+  font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:var(--bg);color:var(--text)}
+header{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:9px 12px;
+  background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0}
+header h1{font-size:14px;margin:0 10px 0 0;font-weight:600}
+header .tip{font-size:11px;color:var(--muted)}
+button{font-size:12px;padding:5px 9px;border:1px solid var(--border);border-radius:6px;
+  background:var(--card);color:var(--text);cursor:pointer}
+button:hover{border-color:var(--accent);color:var(--accent)}
+button.danger:hover{border-color:var(--bad);color:var(--bad)}
+main{flex:1;display:flex;min-height:0}
+
+#stage{flex:1;overflow:auto;position:relative;
+  background-image:radial-gradient(circle,var(--dot) 1px,transparent 1px);
+  background-size:22px 22px}
+#wires{position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:0}
+.wire{fill:none;stroke:var(--wire);stroke-width:1.6;opacity:.6}
+.wire-hit{fill:none;stroke:transparent;stroke-width:16;pointer-events:stroke;cursor:pointer}
+.wire.sel{stroke:var(--accent);stroke-width:2.6;opacity:1}
+#tempLine{position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:3}
+#nodeLayer{position:absolute;left:0;top:0;z-index:1}
+
+.node{position:absolute;width:196px;padding:7px 10px;border-radius:8px;cursor:grab;
+  background:var(--node-bg);border:1.5px solid var(--border);
+  box-shadow:0 1px 3px rgba(0,0,0,.12);overflow:hidden}
+.node:active{cursor:grabbing;box-shadow:0 4px 14px rgba(0,0,0,.22)}
+.node::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--tc,var(--muted))}
+.node:hover{border-color:var(--accent)}
+.node.sel{border-color:var(--accent);box-shadow:0 0 0 3px rgba(37,99,235,.25)}
+.node.bad{border-color:var(--bad);background:rgba(220,38,38,.09)}
+.node.warn{border-color:var(--warn);background:rgba(217,119,6,.09)}
+.node .nm{font-size:12.5px;font-weight:600;line-height:1.25;margin-bottom:3px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node .dt{font-size:10.5px;color:var(--muted);line-height:1.4;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node .tag{display:inline-block;font-size:9.5px;padding:0 4px;border-radius:3px;
+  background:var(--head);margin-left:3px}
+.port{position:absolute;top:50%;width:13px;height:13px;margin-top:-6.5px;border-radius:50%;
+  background:var(--card);border:2px solid var(--accent);cursor:crosshair;z-index:2}
+.port:hover{background:var(--accent)}
+.port.in{left:-7px}
+.port.out{right:-7px}
+
+aside{width:308px;flex-shrink:0;background:var(--panel);border-left:1px solid var(--border);
+  overflow:auto;padding:12px}
+aside h3{font-size:13px;margin:0 0 10px}
+.f{margin-bottom:8px}
+.f label{display:block;font-size:11px;color:var(--muted);margin-bottom:2px}
+.f input,.f select,.f textarea{width:100%;font-size:12px;padding:4px 7px;border-radius:5px;
+  border:1px solid var(--border);background:var(--card);color:var(--text);font-family:inherit}
+.f textarea{resize:vertical;min-height:40px}
+.row{display:flex;gap:6px}.row .f{flex:1}
+.hint{font-size:11px;color:var(--muted);background:var(--head);padding:8px;border-radius:6px;
+  line-height:1.6;margin-bottom:10px}
+.alert{font-size:11.5px;padding:6px 8px;border-radius:5px;margin-bottom:8px;line-height:1.5}
+.alert.bad{background:rgba(220,38,38,.13);color:var(--bad)}
+.alert.warn{background:rgba(217,119,06,.13);color:var(--warn)}
+.alert.ok{background:rgba(22,163,74,.13);color:var(--ok)}
+.alert.info{background:rgba(37,99,235,.12);color:var(--accent)}
+.ops{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+.legend{font-size:11px;color:var(--muted);margin-top:12px;line-height:1.75}
+.dot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:1px}
+</style>
+</head>
+<body>
+<header>
+  <h1>电源树编辑器 · 连线版</h1>
+  <button id="btnAdd">+ 新节点</button>
+  <button id="btnTidy">整理版面</button>
+  <button id="btnExport">导出 JSON</button>
+  <button id="btnImport">导入 JSON</button>
+  <button id="btnReset">恢复示例</button>
+  <button id="btnTheme">深色/浅色</button>
+  <span class="tip">拖右侧圆点连线 · 拖动方块摆放 · 双击空白新建 · 点连线后按 Delete 断开</span>
+  <input type="file" id="fileIn" accept=".json" style="display:none">
+</header>
+<main>
+  <div id="stage">
+    <svg id="wires"></svg>
+    <div id="nodeLayer"></div>
+    <svg id="tempLine"></svg>
+  </div>
+  <aside id="panel"></aside>
+</main>
+
+<script>
+const KEY='power_tree_graph_v1';
+const COLW=268, ROWH=104, NW=196, NH_DEF=74;
+const TYPEC={source:'var(--t-source)',converter:'var(--t-converter)',connector:'var(--t-connector)',
+             device:'var(--t-device)',load:'var(--t-load)'};
+
+// ---------- 数据 ----------
+function nid(){return 'n'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
+function N(o){return Object.assign({id:nid(),label:'新节点',type:'device',
+  vin:'',vout:'',i:'',ipk:'',conn:'',rating:'',note:'',x:40,y:40},o);}
+
+function demoData(){
+  // 通用示例；刻意留了一条并联（备用电池 + LDO 双路进 MCU），用来演示多进一出
+  const a=N({label:'220V 市电',type:'source',vin:220,vout:220,i:0.5,rating:10,conn:'国标墙插',note:'不进板'});
+  const b=N({label:'12V 5A 适配器',type:'converter',vin:220,vout:12,i:5,ipk:5,rating:5,conn:'自带输出线',note:'隔离电源'});
+  const c=N({label:'J1 电源入口',type:'connector',vin:12,vout:12,i:5,ipk:5,rating:20,conn:'XT60',note:'注意公母头方向'});
+  const d=N({label:'DCDC → 5V',type:'converter',vin:12,vout:5,i:2.5,ipk:3,rating:3,conn:'模块插座',note:'逻辑电源'});
+  const e=N({label:'LDO → 3V3',type:'converter',vin:5,vout:3.3,i:0.3,ipk:0.4,rating:1,conn:'SOT-223',note:'数字电源'});
+  const f=N({label:'MCU + 外围',type:'load',vin:3.3,vout:3.3,i:0.25,ipk:0.35,rating:99,conn:'LQFP',note:'估算值'});
+  const g=N({label:'USB / 外设',type:'load',vin:5,vout:5,i:0.5,ipk:0.8,rating:2,conn:'USB-A',note:''});
+  const h=N({label:'DCDC → 6V',type:'converter',vin:12,vout:6,i:3,ipk:4,rating:3,conn:'模块插座',note:'给舵机/电机'});
+  const k=N({label:'J2 出口座',type:'connector',vin:6,vout:6,i:3,ipk:4,rating:4,conn:'XH2.54-3P',note:'1=GND 2=V 3=DATA'});
+  const m=N({label:'舵机 #1',type:'load',vin:6,vout:6,i:1,ipk:2.5,rating:2.2,conn:'原装线',note:'堵转会到峰值'});
+  const n2=N({label:'舵机 #2',type:'load',vin:6,vout:6,i:1,ipk:2.5,rating:2.2,conn:'原装线',note:''});
+  const p=N({label:'备用电池 3V3',type:'source',vin:3.7,vout:3.3,i:0.15,ipk:0.3,rating:2,conn:'JST-XH',note:'并联冗余示例'});
+  const nodes=[a,b,c,d,e,f,g,h,k,m,n2,p];
+  const L=(x,y)=>({id:'l'+Math.random().toString(36).slice(2,8),from:x,to:y});
+  const links=[L(a.id,b.id),L(b.id,c.id),L(c.id,d.id),L(d.id,e.id),L(e.id,f.id),
+               L(d.id,g.id),L(c.id,h.id),L(h.id,k.id),L(k.id,m.id),L(k.id,n2.id),
+               L(p.id,f.id)];   // ← 两路同时进 MCU：多进一出
+  const d0={version:2,nodes,links,theme:null};
+  autoLayout(d0);
+  return d0;
+}
+
+let data=load(), selNode=null, selLink=null;
+const elMap=new Map();   // nodeId -> 长期持有的 DOM 元素（不重建）
+const wireMap=new Map();
+
+function load(){
+  try{const s=localStorage.getItem(KEY);
+    if(s){const d=JSON.parse(s); if(d&&Array.isArray(d.nodes)){ d.links=d.links||[]; return d; }}}catch(e){}
+  const d=demoData(); d.theme=null; return d;
+}
+function save(){localStorage.setItem(KEY,JSON.stringify(data));}
+const byId=id=>data.nodes.find(n=>n.id===id);
+
+// ---------- 校验 ----------
+function status(n){
+  const i=parseFloat(n.i), ip=parseFloat(n.ipk), r=parseFloat(n.rating);
+  if(isNaN(r)||r>=99) return 'ok';
+  const use=Math.max(isNaN(i)?0:i,isNaN(ip)?0:ip);
+  if(isNaN(use)||use===0) return 'ok';
+  if(r < (isNaN(i)?0:i)) return 'bad';
+  if(r < use) return 'warn';
+  return 'ok';
+}
+function watts(n){const v=parseFloat(n.vout),i=parseFloat(n.i);
+  return (isNaN(v)||isNaN(i))?'':(v*i).toFixed(1)+' W';}
+// 下游累计：从这个节点出发的所有边，指向的节点电流之和
+function downSum(n){
+  let s=0; data.links.forEach(l=>{ if(l.from===n.id){ const t=byId(l.to); if(t) s+=parseFloat(t.i)||0; }});
+  return s;
+}
+function upCount(n){ return data.links.filter(l=>l.to===n.id).length; }
+
+// ---------- 布局 ----------
+function autoLayout(d){
+  d=d||data;
+  const indeg={}; d.nodes.forEach(n=>indeg[n.id]=0);
+  d.links.forEach(l=>{ if(indeg[l.to]!==undefined) indeg[l.to]++; });
+  const layer={}; d.nodes.forEach(n=>layer[n.id]=0);
+  const q=d.nodes.filter(n=>indeg[n.id]===0).map(n=>n.id);
+  let guard=0;
+  while(q.length && guard++<20000){
+    const id=q.shift();
+    d.links.forEach(l=>{
+      if(l.from!==id) return;
+      layer[l.to]=Math.max(layer[l.to]||0,layer[id]+1);
+      if(--indeg[l.to]===0) q.push(l.to);
+    });
+  }
+  const g={};
+  d.nodes.forEach(n=>{ const L=layer[n.id]||0; (g[L]=g[L]||[]).push(n); });
+  Object.keys(g).forEach(L=>{
+    g[L].forEach((n,i)=>{ n.x=50+(+L)*COLW; n.y=40+i*ROWH; });
+  });
+}
+
+// ---------- 渲染（diff 增量，不整块重建）----------
+const stage=document.getElementById('stage');
+const nodeLayer=document.getElementById('nodeLayer');
+const wiresSvg=document.getElementById('wires');
+const tempSvg=document.getElementById('tempLine');
+
+function nodeHTML(n){
+  const info=[];
+  if(n.vout!==''&&n.vout!==undefined) info.push(n.vout+' V');
+  if(n.i!==''&&n.i!==undefined) info.push(n.i+' A'+(n.ipk?'/峰'+n.ipk:''));
+  if(n.conn) info.push(n.conn);
+  if(n.rating!==''&&n.rating!==undefined) info.push('额定'+n.rating+'A');
+  const inCnt=upCount(n);
+  return '<div class="nm">'+esc(n.label)+'</div>'+
+    '<div class="dt">'+esc(info.join(' · '))+
+      (watts(n)?'<span class="tag">'+watts(n)+'</span>':'')+
+      (inCnt>1?'<span class="tag">'+inCnt+'路汇入</span>':'')+'</div>';
+}
+function applyNode(el,n){
+  el.style.transform='translate('+n.x+'px,'+n.y+'px)';
+  el.className='node '+status(n)+(selNode===n?' sel':'');
+  el.style.setProperty('--tc',TYPEC[n.type]||'var(--muted)');
+  const body=el.querySelector('.body');
+  const html=nodeHTML(n);
+  if(body._h!==html){ body.innerHTML=html; body._h=html; }
+}
+function createEl(n){
+  const el=document.createElement('div');
+  el.dataset.id=n.id;
+  el.innerHTML='<div class="body"></div>'+
+    '<div class="port in" data-port="in" title="输入（可接多条=并联）"></div>'+
+    '<div class="port out" data-port="out" title="输出（拖到别人的输入口）"></div>';
+  el.addEventListener('pointerdown',ev=>onNodeDown(ev,n));
+  nodeLayer.appendChild(el);
+  elMap.set(n.id,el);
+  applyNode(el,n);
+  return el;
+}
+function redrawWires(){
+  // 增删orphan处理：先移除不存在的
+  wireMap.forEach((obj,lid)=>{ if(!data.links.find(l=>l.id===lid)){ obj.vis.remove(); obj.hit.remove(); wireMap.delete(lid); } });
+  data.links.forEach(l=>{
+    let obj=wireMap.get(l.id);
+    if(!obj){
+      const hit=document.createElementNS('http://www.w3.org/2000/svg','path');
+      const vis=document.createElementNS('http://www.w3.org/2000/svg','path');
+      hit.setAttribute('class','wire-hit'); vis.setAttribute('class','wire');
+      hit.addEventListener('pointerdown',ev=>{ev.stopPropagation(); selLink=l; selNode=null; renderPanel(); markWires();});
+      wiresSvg.appendChild(vis); wiresSvg.appendChild(hit);
+      obj={vis,hit}; wireMap.set(l.id,obj);
+    }
+    const a=byId(l.from), b=byId(l.to);
+    if(!a||!b){ obj.vis.remove(); obj.hit.remove(); wireMap.delete(l.id); return; }
+    const d=pathOf(a,b);
+    obj.vis.setAttribute('d',d); obj.hit.setAttribute('d',d);
+  });
+  markWires();
+}
+function markWires(){
+  wireMap.forEach((o,lid)=>{ o.vis.classList.toggle('sel', !!selLink && selLink.id===lid); });
+}
+function hOf(n){ const el=elMap.get(n.id); return el?el.offsetHeight:NH_DEF; }
+function pathOf(a,b){
+  const x1=a.x+NW, y1=a.y+hOf(a)/2, x2=b.x, y2=b.y+hOf(b)/2;
+  const dx=Math.max(40,(x2-x1)*0.45);
+  return `M${x1},${y1} C${x1+dx},${y1} ${x2-dx},${y2} ${x2},${y2}`;
+}
+function refreshWiresOf(id){
+  data.links.forEach(l=>{
+    if(l.from!==id && l.to!==id) return;
+    const o=wireMap.get(l.id); if(!o) return;
+    const a=byId(l.from), b=byId(l.to); if(!a||!b) return;
+    const d=pathOf(a,b); o.vis.setAttribute('d',d); o.hit.setAttribute('d',d);
+  });
+}
+// 结构变化时调用：同步节点集合 + 全量连线 + 面板
+function render(){
+  const alive=new Set(data.nodes.map(n=>n.id));
+  elMap.forEach((el,id)=>{ if(!alive.has(id)){ el.remove(); elMap.delete(id); } });
+  data.nodes.forEach(n=>{ const el=elMap.get(n.id); if(el) applyNode(el,n); else createEl(n); });
+  redrawWires(); renderPanel(); save();
+}
+// 只刷一个方块（输入时调用，避免重建面板丢焦点）
+function touch(n){
+  const el=elMap.get(n.id); if(el) applyNode(el,n);
+  refreshWiresOf(n.id); save();
+}
+
+// ---------- 交互 ----------
+let drag=null, link=null, tempPath=null;
+function localPt(ev){
+  const r=stage.getBoundingClientRect();
+  return {x:ev.clientX-r.left+stage.scrollLeft, y:ev.clientY-r.top+stage.scrollTop};
+}
+function onNodeDown(ev,n){
+  // 落在端口上的按下要放行，让它冒泡到 nodeLayer 的连线逻辑；
+  // 这里如果 stopPropagation 会把拖连线整个掐死（曾是这个原因导致连不了线）
+  if(ev.target.closest('.port')) return;
+  ev.stopPropagation();
+  selNode=n; selLink=null; markWires(); renderPanel();
+  const r=stage.getBoundingClientRect();
+  drag={n, sx:ev.clientX, sy:ev.clientY, ox:n.x, oy:n.y};
+  stage.setPointerCapture(ev.pointerId);
+}
+stage.addEventListener('pointermove',ev=>{
+  if(link){
+    const p=localPt(ev); link.cur=p;
+    const a=byId(link.fromId);
+    const fromPort=(link.fromPort==='out');
+    const x1=fromPort?a.x+NW:a.x, y1=a.y+hOf(a)/2;
+    const dx=Math.max(30,Math.abs(p.x-x1)*0.45)*(fromPort?1:-1);
+    tempPath.setAttribute('d',`M${x1},${y1} C${x1+dx},${y1} ${p.x-dx},${p.y} ${p.x},${p.y}`);
+    return;
+  }
+  if(drag){
+    drag.n.x=Math.max(0,drag.ox+(ev.clientX-drag.sx));
+    drag.n.y=Math.max(0,drag.oy+(ev.clientY-drag.sy));
+    const el=elMap.get(drag.n.id); if(el) el.style.transform='translate('+drag.n.x+'px,'+drag.n.y+'px)';
+    refreshWiresOf(drag.n.id);
+  }
+});
+stage.addEventListener('pointerup',ev=>{
+  if(link){ finishLink(ev); return; }
+  if(drag){ save(); drag=null; }
+});
+nodeLayer.addEventListener('pointerdown',ev=>{
+  const port=ev.target.closest('.port');
+  if(!port) return;
+  ev.stopPropagation(); ev.preventDefault();
+  const id=port.closest('.node').dataset.id;
+  link={fromId:id, fromPort:port.dataset.port, cur:localPt(ev)};
+  tempPath=document.createElementNS('http://www.w3.org/2000/svg','path');
+  tempPath.setAttribute('class','wire'); tempPath.style.stroke='var(--accent)';
+  tempSvg.appendChild(tempPath);
+});
+function finishLink(ev){
+  tempPath&&tempPath.remove(); tempPath=null;
+  const L=link; link=null;
+  const backToported=document.elementFromPoint(ev.clientX,ev.clientY);
+  const pel=backToported&&backToported.closest('.port');
+  if(!pel) return;
+  const dstId=pel.closest('.node').dataset.id, dstPort=pel.dataset.port;
+  if(dstId===L.fromId) { flashMsg('不能连到自己'); return; }
+  if(dstPort===L.fromPort){ flashMsg('必须从「输出」连到「输入」'); return; }
+  const from=(L.fromPort==='out')?L.fromId:dstId;
+  const to=(L.fromPort==='out')?dstId:L.fromId;
+  if(data.links.find(l=>l.from===from&&l.to===to)){ flashMsg('这条线已经连过了'); return; }
+  data.links.push({id:'l'+Math.random().toString(36).slice(2,8),from,to});
+  render();
+}
+stage.addEventListener('dblclick',ev=>{
+  if(ev.target!==stage&&ev.target!==nodeLayer&&ev.target!==wiresSvg&&ev.target!==tempSvg) return;
+  const p=localPt(ev);
+  const n=N({label:'新节点',x:p.x-90,y:p.y-30});
+  data.nodes.push(n); render(); select(n);
+});
+stage.addEventListener('pointerdown',ev=>{
+  if(ev.target===stage||ev.target===nodeLayer){ selNode=null; selLink=null; renderPanel();
+    elMap.forEach(el=>el.classList.remove('sel')); markWires(); }
+});
+
+// ---------- 面板 ----------
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
+function flashMsg(t){
+  const p=document.getElementById('panel'); p.insertAdjacentHTML('afterbegin',
+    '<div class="alert warn" id="__f">'+t+'</div>');
+  setTimeout(()=>{const e=document.getElementById('__f'); if(e)e.remove();},1800);
+}
+function renderPanel(){
+  const p=document.getElementById('panel');
+  if(!selNode&&!selLink){
+    p.innerHTML='<h3>未选中</h3><div class="hint">'+
+      '<b>连线</b>：按住方块<b>右侧</b>圆点拖到目标方块<b>左侧</b>圆点<br>'+
+      '<b>并联</b>：多条线指向同一个输入口即可<br>'+
+      '<b>起点</b>：没有入线的方块就是起点；把它的入线删掉它就变起点，再连回去就变回子节点<br>'+
+      '<b>摆放</b>：拖方块；乱了点顶部「整理版面」<br>'+
+      '<b>新建</b>：双击空白处<br>'+
+      '<b>断开</b>：单击连线，按 Delete 或点右侧删除</div>'+
+      '<div class="legend"><b>颜色</b><br>'+
+      '<span class="dot" style="background:var(--ok)"></span>余量充足<br>'+
+      '<span class="dot" style="background:var(--warn)"></span>峰值接近上限<br>'+
+      '<span class="dot" style="background:var(--bad)"></span>持续超标，必须改</div>';
+    return;
+  }
+  if(selLink){
+    const a=byId(selLink.from), b=byId(selLink.to);
+    p.innerHTML='<h3>连线</h3><div class="alert info">'+esc(a?a.label:'?')+' → '+esc(b?b.label:'?')+'</div>'+
+      '<div class="ops"><button class="danger" id="blDel">删除这条连线</button></div>'+
+      '<div class="legend">也可以直接按 Delete 键。</div>';
+    document.getElementById('blDel').onclick=delLink;
+    return;
+  }
+  const n=selNode, st=status(n), ds=downSum(n), ins=upCount(n);
+  const rated=parseFloat(n.rating);
+  const msg = st==='bad' ? '<div class="alert bad">❌ 持续 '+n.i+'A 超过额定 '+n.rating+'A，这个节点是瓶颈</div>'
+            : st==='warn'? '<div class="alert warn">⚠️ 峰值 '+n.ipk+'A 超过额定 '+n.rating+'A，长时间会发热</div>'
+            : '<div class="alert ok">✅ 额定 '+n.rating+'A 足够</div>';
+  const flow = ds>0 ? '<div class="alert '+(!isNaN(rated)&&ds>rated?'bad':'info')+'">'+
+      '下游累计 '+ds.toFixed(2)+' A'+(ins>1?'（共 '+ins+' 路汇入）':'')+
+      (!isNaN(rated)&&ds>rated? ' —— 已超过本节点额定 '+n.rating+'A' : '')+'</div>' : '';
+  p.innerHTML='<h3>编辑节点</h3>'+(rated<99?msg:'')+flow+
+   '<div class="f"><label>名称</label><input id="fL" value="'+esc(n.label)+'"></div>'+
+   '<div class="f"><label>类型</label><select id="fT">'+
+     ['source','converter','connector','device','load'].map(t=>'<option'+(n.type===t?' selected':'')+'>'+t+'</option>').join('')+
+   '</select></div>'+
+   '<div class="row"><div class="f"><label>输入 V</label><input id="fVi" value="'+esc(n.vin)+'"></div>'+
+   '<div class="f"><label>输出 V</label><input id="fVo" value="'+esc(n.vout)+'"></div></div>'+
+   '<div class="row"><div class="f"><label>持续 A</label><input id="fI" value="'+esc(n.i)+'"></div>'+
+   '<div class="f"><label>峰值 A</label><input id="fIp" value="'+esc(n.ipk)+'"></div></div>'+
+   '<div class="row"><div class="f"><label>连接器/封装</label><input id="fC" value="'+esc(n.conn)+'"></div>'+
+   '<div class="f"><label>额定电流 A</label><input id="fR" value="'+esc(n.rating)+'"></div></div>'+
+   '<div class="f"><label>备注</label><textarea id="fN">'+esc(n.note)+'</textarea></div>'+
+   '<div class="ops"><button class="danger" id="bnDel">删除节点</button></div>'+
+   '<div class="legend">额定填 99 = 不受限（如纯铜皮）。<br>改动即时生效并存本机，连续输入不会掉焦点。</div>';
+
+  // 关键：输入时只刷新这一个方块，绝不重建面板（否则每敲一个字就失焦）
+  const bind=(id,key)=>{
+    const el=document.getElementById(id);
+    el.oninput=()=>{ n[key]=el.value; touch(n); };
+  };
+  bind('fL','label'); bind('fVi','vin'); bind('fVo','vout');
+  bind('fI','i'); bind('fIp','ipk'); bind('fC','conn'); bind('fR','rating'); bind('fN','note');
+  document.getElementById('fT').onchange=e=>{ n.type=e.target.value; touch(n); };
+  document.getElementById('bnDel').onclick=delNode;
+}
+function select(n){ selNode=n; selLink=null; render(); }
+function delNode(){
+  if(!selNode||!confirm('删除「'+selNode.label+'」？相连的线会一起删掉。')) return;
+  const id=selNode.id;
+  data.links=data.links.filter(l=>l.from!==id&&l.to!==id);
+  data.nodes=data.nodes.filter(n=>n.id!==id);
+  selNode=null; render();
+}
+function delLink(){
+  if(!selLink) return;
+  data.links=data.links.filter(l=>l.id!==selLink.id);
+  selLink=null; render();
+}
+document.addEventListener('keydown',e=>{
+  if((e.key==='Delete'||e.key==='Backspace')&&selLink){ e.preventDefault(); delLink(); }
+});
+
+// ---------- 顶部按钮 ----------
+document.getElementById('btnAdd').onclick=()=>{
+  const n=N({label:'新节点',x:60+Math.random()*120,y:60+Math.random()*160});
+  data.nodes.push(n); render(); select(n);
+};
+document.getElementById('btnTidy').onclick=()=>{ autoLayout(); render(); };
+document.getElementById('btnExport').onclick=()=>{
+  const b=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(b);
+  const dt=new Date(), pad=x=>String(x).padStart(2,'0');
+  a.download='power_tree_graph_'+dt.getFullYear()+pad(dt.getMonth()+1)+pad(dt.getDate())+'.json';
+  a.click();
+};
+document.getElementById('btnImport').onclick=()=>document.getElementById('fileIn').click();
+document.getElementById('fileIn').onchange=e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const rd=new FileReader();
+  rd.onload=()=>{
+    try{
+      const d=JSON.parse(rd.result);
+      if(!d||!Array.isArray(d.nodes)) throw new Error('缺少 nodes 数组');
+      d.links=d.links||[];
+      data=d; selNode=null; selLink=null;
+      elMap.forEach(el=>el.remove()); elMap.clear();
+      wireMap.forEach(o=>{o.vis.remove();o.hit.remove();}); wireMap.clear();
+      save(); render(); alert('导入成功');
+    }catch(err){ alert('这个文件读不了：'+err.message); }
+  };
+  rd.readAsText(f);
+  e.target.value='';
+};
+document.getElementById('btnReset').onclick=()=>{
+  if(!confirm('恢复示例？当前所有修改会丢失。')) return;
+  const th=data.theme;
+  elMap.forEach(el=>el.remove()); elMap.clear();
+  wireMap.forEach(o=>{o.vis.remove();o.hit.remove();}); wireMap.clear();
+  data=demoData(); data.theme=th; selNode=null; selLink=null; save(); render();
+};
+document.getElementById('btnTheme').onclick=()=>{
+  const t=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';
+  document.documentElement.setAttribute('data-theme',t); data.theme=t; save();
+};
+
+if(data.theme) document.documentElement.setAttribute('data-theme',data.theme);
+render();
+</script>
+</body>
+</html>
