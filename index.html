@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>电源树编辑器 · Power Tree Editor</title>
+<style>
+:root{
+  --bg:#f5f6f8; --panel:#ffffff; --card:#ffffff; --line:#333333;
+  --text:#1c1f23; --muted:#6b7280; --border:#d8dce3; --accent:#2563eb;
+  --ok:#16a34a; --warn:#d97706; --bad:#dc2626;
+  --node-bg:#ffffff; --head:#eef2f7;
+}
+html[data-theme="dark"]{
+  --bg:#12161c; --panel:#1a1f27; --card:#1e242e; --line:#9fb3c8;
+  --text:#e6ebf2; --muted:#93a1b3; --border:#2c3542; --accent:#60a5fa;
+  --node-bg:#202834; --head:#27303c;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+header{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;
+  background:var(--panel);border-bottom:1px solid var(--border)}
+header h1{font-size:15px;margin:0 12px 0 0;font-weight:600}
+button{font-size:12px;padding:5px 10px;border:1px solid var(--border);border-radius:6px;
+  background:var(--card);color:var(--text);cursor:pointer}
+button:hover{border-color:var(--accent);color:var(--accent)}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+main{flex:1;display:flex;min-height:0}
+#canvas{flex:1;overflow:auto;position:relative;padding:16px}
+.sec{margin-bottom:26px}
+.sec h2{font-size:13px;color:var(--muted);margin:0 0 10px;font-weight:600;
+  border-left:3px solid var(--accent);padding-left:8px}
+.wrap{position:relative}
+svg.lines{position:absolute;inset:0;overflow:visible;pointer-events:none}
+.node{position:absolute;width:214px;padding:8px 10px;border-radius:8px;
+  background:var(--node-bg);border:1.5px solid var(--border);cursor:pointer;
+  box-shadow:0 1px 3px rgba(0,0,0,.12);transition:.12s}
+.node:hover{border-color:var(--accent)}
+.node.sel{border-color:var(--accent);box-shadow:0 0 0 3px rgba(37,99,235,.25)}
+.node .nm{font-size:12.5px;font-weight:600;line-height:1.25;word-break:break-all}
+.node .dt{font-size:11px;color:var(--muted);margin-top:4px;line-height:1.45}
+.node .tag{display:inline-block;font-size:10px;padding:1px 5px;border-radius:4px;
+  background:var(--head);margin-right:4px}
+.node.bad{border-color:var(--bad);background:rgba(220,38,38,.09)}
+.node.warn{border-color:var(--warn);background:rgba(217,119,6,.09)}
+aside{width:312px;flex-shrink:0;background:var(--panel);border-left:1px solid var(--border);
+  overflow:auto;padding:12px}
+aside h3{font-size:13px;margin:0 0 10px}
+.f{margin-bottom:9px}
+.f label{display:block;font-size:11px;color:var(--muted);margin-bottom:3px}
+.f input,.f select,.f textarea{width:100%;font-size:12px;padding:5px 7px;border-radius:5px;
+  border:1px solid var(--border);background:var(--card);color:var(--text);font-family:inherit}
+.f textarea{resize:vertical;min-height:44px}
+.row{display:flex;gap:6px}
+.row .f{flex:1}
+.hint{font-size:11px;color:var(--muted);background:var(--head);padding:8px;border-radius:6px;
+  line-height:1.5;margin-bottom:10px}
+.alert{font-size:11.5px;padding:6px 8px;border-radius:5px;margin-bottom:8px;line-height:1.5}
+.alert.bad{background:rgba(220,38,38,.13);color:var(--bad)}
+.alert.warn{background:rgba(217,119,6,.13);color:var(--warn)}
+.alert.ok{background:rgba(22,163,74,.13);color:var(--ok)}
+.ops{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.legend{font-size:11px;color:var(--muted);margin-top:14px;line-height:1.7}
+.dot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:1px}
+</style>
+</head>
+<body>
+<header>
+  <h1>电源树编辑器</h1>
+  <button class="primary" id="btnAddSec">+ 新分区</button>
+  <button id="btnExport">导出 JSON</button>
+  <button id="btnImport">导入 JSON</button>
+  <button id="btnReset">恢复示例</button>
+  <button id="btnTheme">深色/浅色</button>
+  <span style="font-size:11px;color:var(--muted)">点击方块即可编辑 · 自动保存本机</span>
+  <input type="file" id="fileIn" accept=".json" style="display:none">
+</header>
+<main>
+  <div id="canvas"></div>
+  <aside id="panel"></aside>
+</main>
+
+<script>
+const KEY='power_tree_editor_v1';
+const COL=262, ROW=88, NW=214, NH=76;
+
+function N(o){return Object.assign({id:'n'+(Date.now()%100000)+Math.floor(Math.random()*1000),
+  label:'新节点',type:'device',vin:'',vout:'',i:'',ipk:'',conn:'',rating:'',note:''},o);}
+
+function defaultData(){
+  // 通用示例：一条典型的嵌入式/机器人电源树。随便删改，它只是模板。
+  return [
+  {name:'① 主电源链', roots:[
+    N({label:'220V 市电',type:'source',vin:220,vout:220,i:0.5,rating:10,conn:'国标墙插',note:'不进板',children:[
+      N({label:'12V 5A 适配器',type:'converter',vin:220,vout:12,i:5,ipk:5,rating:5,conn:'适配器自带输出线',note:'隔离电源',children:[
+        N({label:'J1 电源入口',type:'connector',vin:12,vout:12,i:5,ipk:5,rating:20,conn:'XT60',note:'注意公母头方向别反',children:[
+          N({label:'DCDC → 5V',type:'converter',vin:12,vout:5,i:2.5,ipk:3,rating:3,conn:'模块插座',note:'逻辑电源',children:[
+            N({label:'LDO → 3V3',type:'converter',vin:5,vout:3.3,i:0.3,ipk:0.4,rating:1,conn:'SOT-223',note:'数字电源',children:[
+              N({label:'MCU + 外围',type:'load',vin:3.3,vout:3.3,i:0.25,ipk:0.35,rating:99,conn:'LQFP 封装',note:'估算值'})
+            ]}),
+            N({label:'USB / 外设',type:'load',vin:5,vout:5,i:0.5,ipk:0.8,rating:2,conn:'USB-A',note:'示例负载'})
+          ]})
+        ]})
+      ]})
+    ]})
+  ]},
+
+  {name:'② 动力支路', roots:[
+    N({label:'DCDC → 6V',type:'converter',vin:12,vout:6,i:3,ipk:4,rating:3,conn:'模块插座',note:'给舵机 / 电机',children:[
+      N({label:'J2 出口座',type:'connector',vin:6,vout:6,i:3,ipk:4,rating:4,conn:'XH2.54-3P',note:'1=GND 2=V 3=DATA',children:[
+        N({label:'舵机 #1',type:'load',vin:6,vout:6,i:1,ipk:2.5,rating:2.2,conn:'原装线',note:'堵转会到峰值'}),
+        N({label:'舵机 #2',type:'load',vin:6,vout:6,i:1,ipk:2.5,rating:2.2,conn:'原装线',note:''})
+      ]})
+    ]})
+  ]},
+
+  {name:'③ 信号链（功率不经过这里）', roots:[
+    N({label:'MCU UART TX',type:'source',vout:3.3,i:0.01,rating:99,conn:'GPIO',note:'总线 A',children:[
+      N({label:'电平转换 / 隔离板',type:'device',vout:5,i:0.1,rating:6,conn:'螺丝端子',note:'只转信号，禁止走功率',children:[
+        N({label:'舵机 DATA',type:'load',i:0.01,rating:99,conn:'3P DATA',note:'与 J2-3 汇合'})
+      ]})
+    ]})
+  ]}
+  ];
+}
+
+let data=load(), sel=null, secIdx=-1;
+function load(){
+  try{const s=localStorage.getItem(KEY); if(s){const d=JSON.parse(s); if(d&&d.sections)return d;}}catch(e){}
+  return {sections:defaultData(), theme:null};
+}
+function save(){localStorage.setItem(KEY,JSON.stringify(data));}
+
+// ---- 布局 ----
+function calcTree(root){
+  let cur=0, maxD=0;
+  (function walk(n,d){
+    n._d=d; maxD=Math.max(maxD,d);
+    const ch=n.children||[];
+    if(!ch.length){ n._y=(cur++)*ROW; return; }
+    ch.forEach(c=>walk(c,d+1));
+    n._y=(ch[0]._y + ch[ch.length-1]._y)/2;
+  })(root,0);
+  return {h:cur*ROW, maxD};
+}
+
+// ---- 状态判定 ----
+function status(n){
+  const i=parseFloat(n.i), ip=parseFloat(n.ipk), r=parseFloat(n.rating);
+  if(isNaN(r)||r>=99) return 'ok';
+  const use=Math.max(isNaN(i)?0:i, isNaN(ip)?0:ip);
+  if(isNaN(use)||use===0) return 'ok';
+  if(r < (isNaN(i)?0:i)) return 'bad';
+  if(r < use) return 'warn';
+  return 'ok';
+}
+function watts(n){
+  const v=parseFloat(n.vout), i=parseFloat(n.i);
+  if(isNaN(v)||isNaN(i)) return '';
+  return (v*i).toFixed(1)+' W';
+}
+
+// ---- 渲染 ----
+function render(){
+  const cv=document.getElementById('canvas');
+  cv.innerHTML='';
+  data.sections.forEach((sec,si)=>{
+    const d=document.createElement('div'); d.className='sec';
+    const h=document.createElement('h2');
+    h.textContent=sec.name;
+    d.appendChild(h);
+    const wrap=document.createElement('div'); wrap.className='wrap';
+    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('class','lines');
+    let totalH=0, maxDepth=0;
+    const newRoots=sec.roots||(sec.roots=[sec.root]);
+    if(sec.root&&!sec.roots) sec.roots=[sec.root];
+    newRoots.forEach(root=>{
+      const r=calcTree(root);
+      totalH=Math.max(totalH,r.h); maxDepth=Math.max(maxDepth,r.maxD);
+    });
+    let base=0;
+    newRoots.forEach(root=>{
+      const r=calcTree(root);
+      // offset children y by base
+      const off=base;
+      (function mark(n){ n._y+=off; (n.children||[]).forEach(mark); })(root);
+      base += r.h;
+      // draw
+      (function draw(n){
+        const el=document.createElement('div');
+        el.className='node '+status(n)+(sel===n?' sel':'');
+        el.style.left=(n._d*COL)+'px';
+        el.style.top=n._y+'px';
+        let info=[];
+        if(n.vout!==''&&n.vout!==undefined) info.push(n.vout+' V');
+        if(n.i!==''&&n.i!==undefined) info.push(n.i+' A'+(n.ipk?' /峰'+n.ipk:''));
+        if(n.conn) info.push(n.conn);
+        if(n.rating!==''&&n.rating!==undefined) info.push('额定'+n.rating+'A');
+        el.innerHTML='<div class="nm">'+esc(n.label)+'</div>'+
+          '<div class="dt">'+esc(info.join(' · '))+
+          (watts(n)?' <span class="tag">'+watts(n)+'</span>':'')+'</div>';
+        el.onclick=ev=>{ev.stopPropagation(); sel=n; secIdx=si; render();};
+        wrap.appendChild(el);
+        (n.children||[]).forEach(c=>{
+          const ln=document.createElementNS('http://www.w3.org/2000/svg','path');
+          const x1=n._d*COL+NW, y1=n._y+NH/2, x2=c._d*COL, y2=c._y+NH/2;
+          const mx=(x1+x2)/2;
+          ln.setAttribute('d',`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`);
+          ln.setAttribute('stroke','var(--line)'); ln.setAttribute('fill','none');
+          ln.setAttribute('stroke-width','1.5'); ln.setAttribute('opacity','.55');
+          svg.appendChild(ln);
+          draw(c);
+        });
+      })(root);
+    });
+    wrap.appendChild(svg);
+    wrap.style.height=Math.max(base+NH,80)+'px';
+    wrap.style.width=((maxDepth+1)*COL)+'px';
+    d.appendChild(wrap);
+    cv.appendChild(d);
+  });
+  renderPanel();
+}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
+
+function renderPanel(){
+  const p=document.getElementById('panel');
+  if(!sel){
+    p.innerHTML='<h3>未选中</h3><div class="hint">点击左侧任意方块即可编辑它的参数。<br><br>规则提醒：<br>·「额定」= 这个连接/器件能长期承受的电流<br>· 额定 &lt; 持续电流 → 红色<br>· 额定 &lt; 峰值电流 → 橙色<br>· 99 = 不受限（如纯铜皮）</div>'+
+      '<div class="legend"><b>颜色含义</b><br>'+
+      '<span class="dot" style="background:var(--ok)"></span>余量充足<br>'+
+      '<span class="dot" style="background:var(--warn)"></span>峰值接近上限<br>'+
+      '<span class="dot" style="background:var(--bad)"></span>持续就超标，必须改</div>';
+    return;
+  }
+  const st=status(sel);
+  const msg = st==='bad' ? '<div class="alert bad">❌ 持续电流 '+sel.i+'A 已超过额定 '+sel.rating+'A —— 这个节点是瓶颈<br>（参考：普通 2.54 排针单针约 1.5–2A，跳线帽约 2A）</div>'
+            : st==='warn' ? '<div class="alert warn">⚠️ 峰值 '+sel.ipk+'A 超过额定 '+sel.rating+'A，长时间使用会发热</div>'
+            : '<div class="alert ok">✅ 额定 '+sel.rating+'A 足够</div>';
+  p.innerHTML='<h3>编辑节点</h3>'+ (parseFloat(sel.rating)<99?msg:'') +
+   '<div class="f"><label>名称</label><input id="fL" value="'+esc(sel.label)+'"></div>'+
+   '<div class="f"><label>类型</label><select id="fT">'+
+     ['source','converter','connector','device','load'].map(t=>'<option'+(sel.type===t?' selected':'')+'>'+t+'</option>').join('')+
+   '</select></div>'+
+   '<div class="row"><div class="f"><label>输入 V</label><input id="fVi" value="'+esc(sel.vin)+'"></div>'+
+   '<div class="f"><label>输出 V</label><input id="fVo" value="'+esc(sel.vout)+'"></div></div>'+
+   '<div class="row"><div class="f"><label>持续 A</label><input id="fI" value="'+esc(sel.i)+'"></div>'+
+   '<div class="f"><label>峰值 A</label><input id="fIp" value="'+esc(sel.ipk)+'"></div></div>'+
+   '<div class="row"><div class="f"><label>连接器/封装</label><input id="fC" value="'+esc(sel.conn)+'"></div>'+
+   '<div class="f"><label>额定电流 A</label><input id="fR" value="'+esc(sel.rating)+'"></div></div>'+
+   '<div class="f"><label>备注</label><textarea id="fN">'+esc(sel.note)+'</textarea></div>'+
+   '<div class="ops">'+
+     '<button id="bAdd">+ 子节点</button>'+
+     '<button id="bDel">删除（含子树）</button>'+
+   '</div>'+
+   '<div class="legend">额定电流填 99 表示不受限。<br>修改即时生效并自动保存到本机。</div>';
+
+  const bind=(id,key,cast)=>{
+    const el=document.getElementById(id);
+    el.oninput=()=>{ sel[key]= cast?cast(el.value):el.value; save(); render(); };
+    el.onkeydown=e=>e.stopPropagation();
+  };
+  bind('fL','label'); bind('fT','type');
+  bind('fVi','vin'); bind('fVo','vout');
+  bind('fI','i'); bind('fIp','ipk');
+  bind('fC','conn'); bind('fR','rating'); bind('fN','note');
+
+  document.getElementById('bAdd').onclick=()=>{
+    const c=N({label:'新子节点'});
+    (sel.children=sel.children||[]).push(c);
+    sel=c; save(); render();
+  };
+  document.getElementById('bDel').onclick=()=>{
+    if(!confirm('删除「'+sel.label+'」及其所有子节点？')) return;
+    const sec=data.sections[secIdx];
+    const rm=(arr)=>{
+      for(let i=0;i<arr.length;i++){
+        if(arr[i]===sel){arr.splice(i,1);return true;}
+        if(arr[i].children&&rm(arr[i].children)) return true;
+      }
+      return false;
+    };
+    if(sec&&sec.roots) rm(sec.roots);
+    sel=null; save(); render();
+  };
+}
+
+document.getElementById('btnAddSec').onclick=()=>{
+  const nm=prompt('新分区名称：','新分区');
+  if(!nm) return;
+  data.sections.push({name:nm, roots:[N({label:'起点'})]});
+  save(); render();
+};
+document.getElementById('btnExport').onclick=()=>{
+  const b=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(b);
+  a.download='power_tree_'+new Date().toISOString().slice(0,10)+'.json';
+  a.click();
+};
+document.getElementById('btnImport').onclick=()=>document.getElementById('fileIn').click();
+document.getElementById('fileIn').onchange=e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const rd=new FileReader();
+  rd.onload=()=>{ try{ data=JSON.parse(rd.result); sel=null; save(); render(); alert('导入成功'); }
+                  catch(err){ alert('文件格式不对：'+err.message); } };
+  rd.readAsText(f);
+};
+document.getElementById('btnReset').onclick=()=>{
+  if(!confirm('恢复到示例电源树？当前所有修改会丢失。')) return;
+  data={sections:defaultData(), theme:data&&data.theme}; sel=null; save(); render();
+};
+document.getElementById('btnTheme').onclick=()=>{
+  const t=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';
+  document.documentElement.setAttribute('data-theme',t); data.theme=t; save();
+};
+
+// 主题记忆
+if(data && data.theme) document.documentElement.setAttribute('data-theme',data.theme);
+render();
+</script>
+</body>
+</html>
