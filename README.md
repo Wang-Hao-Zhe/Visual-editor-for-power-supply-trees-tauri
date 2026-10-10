@@ -36,9 +36,9 @@
 git clone https://github.com/<你的用户名>/power-tree-editor.git
 ```
 
-然后**直接双击 `index.html`**，或者右键用浏览器打开。
+然后**直接双击 `graph.html`**（连线版，推荐，已适配触摸/移动端），或 `index.html`（树版）也行，右键用浏览器打开即可。
 
-也可以拖进任意一个静态托管（GitHub Pages / Netlify / Vercel），因为整个项目就一个 HTML 文件。
+也可以拖进任意一个静态托管（GitHub Pages / Netlify / Vercel），因为整个项目就是几个 HTML 文件。
 
 ---
 
@@ -127,6 +127,7 @@ git clone https://github.com/<你的用户名>/power-tree-editor.git
 - 没有多标签页同步，两个人改同一棵树会各改各的
 - 校验只做"持续 vs 额定"和"峰值 vs 额定"，不做线宽、压降、温升计算
 - 纯前端，没有撤销/重做（Undo），删节点前会弹确认框
+- 📱 **触摸/移动端**：连线版 `graph.html` 已处理触摸拖拽与连线（禁用了浏览器手势抢占、并监听 `pointercancel`），手机上可正常拖放与接线；树版 `index.html` 面板为桌面宽度，窄屏会比较挤。
 
 ---
 

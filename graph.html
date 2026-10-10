@@ -40,6 +40,7 @@ main{flex:1;display:flex;min-height:0}
 #nodeLayer{position:absolute;left:0;top:0;z-index:1}
 
 .node{position:absolute;width:196px;padding:7px 10px;border-radius:8px;cursor:grab;
+  touch-action:none;                 /* 关键：禁用触摸手势，否则拖拽被浏览器接管后只发 pointercancel，松手收不到 */
   background:var(--node-bg);border:1.5px solid var(--border);
   box-shadow:0 1px 3px rgba(0,0,0,.12);overflow:hidden}
 .node:active{cursor:grabbing;box-shadow:0 4px 14px rgba(0,0,0,.22)}
@@ -291,10 +292,13 @@ function onNodeDown(ev,n){
   if(ev.target.closest('.port')) return;
   ev.stopPropagation();
   selNode=n; selLink=null; markWires(); renderPanel();
-  const r=stage.getBoundingClientRect();
   drag={n, sx:ev.clientX, sy:ev.clientY, ox:n.x, oy:n.y};
-  stage.setPointerCapture(ev.pointerId);
+  // 把指针捕获到这个节点元素上（而不是 stage），失败就吞掉，避免拖拽在边界卡死
+  try{ const el=elMap.get(n.id); if(el&&el.setPointerCapture) el.setPointerCapture(ev.pointerId); }catch(_){}
+  if(ev.cancelable) ev.preventDefault();
 }
+function endDrag(){ if(drag){ save(); drag=null; } }
+function endLink(){ if(link){ link=null; tempPath&&tempPath.remove(); tempPath=null; } }
 stage.addEventListener('pointermove',ev=>{
   if(link){
     const p=localPt(ev); link.cur=p;
@@ -314,8 +318,11 @@ stage.addEventListener('pointermove',ev=>{
 });
 stage.addEventListener('pointerup',ev=>{
   if(link){ finishLink(ev); return; }
-  if(drag){ save(); drag=null; }
+  endDrag();
 });
+// 触摸设备上拖拽会被系统手势接管，浏览器只会发 pointercancel 而不是 pointerup；
+// 不处理它，drag/link 会永远挂着 —— 表现就是「抓住了松不开」。这是本次要修的核心 bug。
+stage.addEventListener('pointercancel',ev=>{ endLink(); endDrag(); });
 nodeLayer.addEventListener('pointerdown',ev=>{
   const port=ev.target.closest('.port');
   if(!port) return;

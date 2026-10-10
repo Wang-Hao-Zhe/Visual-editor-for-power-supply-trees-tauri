@@ -101,5 +101,21 @@ chk('新增后节点数',nodes().length,n8+1);
 console.log('\n=== 9. 数据落盘 ===');
 chk('localStorage 已写', !!w.localStorage.getItem('power_tree_graph_v1')?'是':'否','是');
 
+console.log('\n=== 10. 拖动中途被取消（pointercancel）→ 必须能松手 ===');
+// 这是真实 bug：触摸设备拖拽被系统手势接管，只发 pointercancel 不发 pointerup，
+// 若不处理，drag 永远挂着 -> 表现为「抓住了松不开」。
+const tg=byLabel('USB / 外设');
+const posStart=tg.style.transform;
+pd(tg,30,30); pm(90,90);
+const during=tg.style.transform;
+stage.dispatchEvent(new w.PointerEvent('pointercancel',{bubbles:true,clientX:90,clientY:90}));
+const afterCancel=tg.style.transform;
+pm(300,300);                 // cancel 之后再移动，不应再拖动（drag 已清）
+chk('pointercancel 后拖动被终止', tg.style.transform===afterCancel?'是':'否','是');
+chk('拖动过程中确实有位移', during!==posStart?'是':'否','是');
+
+console.log('\n'+(errs.length?'⚠ 页面异常:\n'+errs.join('\n'):'✅ 无 JS 异常'));
+console.log('\n结果：'+pass+' 通过 / '+fail+' 失败');
+
 console.log('\n'+(errs.length?'⚠ 页面异常:\n'+errs.join('\n'):'✅ 无 JS 异常'));
 console.log('\n结果：'+pass+' 通过 / '+fail+' 失败');
