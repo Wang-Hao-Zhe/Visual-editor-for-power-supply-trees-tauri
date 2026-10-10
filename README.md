@@ -33,7 +33,7 @@
 ## 快速开始
 
 ```
-git clone https://github.com/<你的用户名>/power-tree-editor.git
+git clone https://github.com/Xun-Yu-WX/power-tree-editor.git
 ```
 
 然后**直接双击 `graph.html`**（连线版，推荐，已适配触摸/移动端），或 `index.html`（树版）也行，右键用浏览器打开即可。
