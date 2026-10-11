@@ -70,24 +70,20 @@ jobs:
   android:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
 
-      # 不写 android-actions/setup-android，避免任何默认 tools 逻辑
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0 ndk;29.0.13846066'
+
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: aarch64-linux-android }
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: "src-tauri -> target" }
-
-      - name: Install Android components
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-        run: |
-          yes | sdkmanager --licenses
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;29.0.13846066"
 
       - run: npm install
       - run: mkdir -p public && npm run build:public
