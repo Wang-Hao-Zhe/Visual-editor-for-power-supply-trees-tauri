@@ -141,10 +141,26 @@ function demoData(){
 let data=load(), selNode=null, selLink=null;
 const elMap=new Map();   // nodeId -> 长期持有的 DOM 元素（不重建）
 const wireMap=new Map();
-
-function load(){
+//10.11在LLM辅助下修改
+/*function load(){
   try{const s=localStorage.getItem(KEY);
     if(s){const d=JSON.parse(s); if(d&&Array.isArray(d.nodes)){ d.links=d.links||[]; return d; }}}catch(e){}
+  const d=demoData(); d.theme=null; return d;
+}
+*/
+function load(){
+  try{
+    const s=localStorage.getItem(KEY);
+    if(s){
+      const d=JSON.parse(s);
+      if(d && Array.isArray(d.nodes) && Array.isArray(d.links)){
+        const ids = new Set(d.nodes.map(n => n && n.id));
+        const linksOk = d.links.every(l => l && ids.has(l.from) && ids.has(l.to));
+        const nodesOk = d.nodes.every(n => n && typeof n.id === 'string');
+        if(nodesOk && linksOk) return d;
+      }
+    }
+  }catch(e){}
   const d=demoData(); d.theme=null; return d;
 }
 function save(){localStorage.setItem(KEY,JSON.stringify(data));}
@@ -457,7 +473,9 @@ document.getElementById('btnImport').onclick=()=>document.getElementById('fileIn
 document.getElementById('fileIn').onchange=e=>{
   const f=e.target.files[0]; if(!f) return;
   const rd=new FileReader();
-  rd.onload=()=>{
+  //10.11日在LLM辅助下修改
+  /*
+    rd.onload=()=>{
     try{
       const d=JSON.parse(rd.result);
       if(!d||!Array.isArray(d.nodes)) throw new Error('缺少 nodes 数组');
@@ -468,6 +486,30 @@ document.getElementById('fileIn').onchange=e=>{
       save(); render(); alert('导入成功');
     }catch(err){ alert('这个文件读不了：'+err.message); }
   };
+  rd.readAsText(f);
+  e.target.value='';
+};
+  */
+  rd.onload=()=>{
+  try{
+    const d=JSON.parse(rd.result);
+    if(!d || !Array.isArray(d.nodes)) throw new Error('缺少 nodes 数组');
+    if(!Array.isArray(d.links)) d.links = [];
+
+    const ids = new Set(d.nodes.map(n => n && n.id));
+    for(const n of d.nodes){
+      if(!n || typeof n !== 'object' || typeof n.id !== 'string' || !ids.has(n.id)) throw new Error('节点数据格式不正确');
+    }
+    for(const l of d.links){
+      if(!l || !ids.has(l.from) || !ids.has(l.to)) throw new Error('连线引用了不存在的节点');
+    }
+
+    data=d; selNode=null; selLink=null;
+    elMap.forEach(el=>el.remove()); elMap.clear();
+    wireMap.forEach(o=>{o.vis.remove();o.hit.remove();}); wireMap.clear();
+    save(); render(); alert('导入成功');
+  }catch(err){ alert('这个文件读不了：'+err.message); }
+};
   rd.readAsText(f);
   e.target.value='';
 };
