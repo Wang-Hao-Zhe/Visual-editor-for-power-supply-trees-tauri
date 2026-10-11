@@ -6,7 +6,7 @@
 
 1.可能给graph.html修了 [KnownIssues](./KNOWN_ISSUES.md) P0.②的问题
 
-2.加了个画布空白处拖动
+2.加了个画布空白处拖动和双指与滚轮缩放
 
 3.打了个包
 

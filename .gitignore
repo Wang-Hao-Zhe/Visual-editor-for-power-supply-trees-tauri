@@ -8,5 +8,3 @@ desktop.ini
 .vscode/
 .idea/
 *.swp
-
-./src-tauri/target/

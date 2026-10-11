@@ -6,12 +6,14 @@
 <title>电源树编辑器 · 连线版</title>
 <style>
 :root{
+  color-scheme:light;
   --bg:#f5f6f8; --panel:#fff; --card:#fff; --text:#1c1f23; --muted:#6b7280;
   --border:#d8dce3; --accent:#2563eb; --ok:#16a34a; --warn:#d97706; --bad:#dc2626;
   --node-bg:#fff; --head:#eef2f7; --wire:#333; --dot:#c9d0da;
   --t-source:#2563eb; --t-converter:#16a34a; --t-connector:#d97706; --t-device:#7c3aed; --t-load:#0891b2;
 }
 html[data-theme="dark"]{
+  color-scheme:dark;
   --bg:#12161c; --panel:#1a1f27; --card:#1e242e; --text:#e6ebf2; --muted:#93a1b3;
   --border:#2c3542; --accent:#60a5fa; --node-bg:#202834; --head:#27303c; --wire:#9fb3c8; --dot:#2a3340;
   --t-source:#60a5fa; --t-converter:#4ade80; --t-connector:#fbbf24; --t-device:#c084fc; --t-load:#22d3ee;
@@ -29,7 +31,7 @@ button:hover{border-color:var(--accent);color:var(--accent)}
 button.danger:hover{border-color:var(--bad);color:var(--bad)}
 main{flex:1;display:flex;min-height:0}
 
-#stage{flex:1;overflow:auto;position:relative;touch-action:none;
+#stage{flex:1;overflow:hidden;position:relative;touch-action:none;
   background-image:radial-gradient(circle,var(--dot) 1px,transparent 1px);
   background-size:22px 22px}
 #wires{position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:0}
@@ -68,6 +70,7 @@ aside h3{font-size:13px;margin:0 0 10px}
 .f label{display:block;font-size:11px;color:var(--muted);margin-bottom:2px}
 .f input,.f select,.f textarea{width:100%;font-size:12px;padding:4px 7px;border-radius:5px;
   border:1px solid var(--border);background:var(--card);color:var(--text);font-family:inherit}
+.f select option{background:var(--card);color:var(--text)}
 .f textarea{resize:vertical;min-height:40px}
 .row{display:flex;gap:6px}.row .f{flex:1}
 .hint{font-size:11px;color:var(--muted);background:var(--head);padding:8px;border-radius:6px;
@@ -80,6 +83,16 @@ aside h3{font-size:13px;margin:0 0 10px}
 .ops{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
 .legend{font-size:11px;color:var(--muted);margin-top:12px;line-height:1.75}
 .dot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:1px}
+#toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:20;
+  max-width:min(90vw,480px);padding:9px 14px;border-radius:7px;background:var(--panel);
+  border:1px solid var(--border);box-shadow:0 4px 18px rgba(0,0,0,.18);font-size:13px}
+#toast[hidden],#dialog[hidden]{display:none}
+#dialog{position:fixed;inset:0;z-index:30;display:grid;place-items:center;padding:16px;
+  background:rgba(0,0,0,.42)}
+#dialog .box{width:min(100%,360px);padding:16px;border:1px solid var(--border);
+  border-radius:10px;background:var(--panel);color:var(--text);box-shadow:0 10px 32px rgba(0,0,0,.24)}
+#dialogMessage{font-size:14px;line-height:1.5;white-space:pre-wrap}
+#dialog .ops{justify-content:flex-end}
 </style>
 </head>
 <body>
@@ -94,6 +107,16 @@ aside h3{font-size:13px;margin:0 0 10px}
   <span class="tip">拖右侧圆点连线 · 拖动方块摆放 · 双击空白新建 · 点连线后按 Delete 断开</span>
   <input type="file" id="fileIn" accept=".json" style="display:none">
 </header>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+<div id="dialog" role="dialog" aria-modal="true" aria-labelledby="dialogMessage" hidden>
+  <div class="box">
+    <div id="dialogMessage"></div>
+    <div class="ops">
+      <button id="dialogCancel">取消</button>
+      <button class="danger" id="dialogConfirm">确定</button>
+    </div>
+  </div>
+</div>
 <main>
   <div id="stage">
     <svg id="wires"></svg>
@@ -154,10 +177,16 @@ function load(){
     if(s){
       const d=JSON.parse(s);
       if(d && Array.isArray(d.nodes) && Array.isArray(d.links)){
-        const ids = new Set(d.nodes.map(n => n && n.id));
-        const linksOk = d.links.every(l => l && ids.has(l.from) && ids.has(l.to));
-        const nodesOk = d.nodes.every(n => n && typeof n.id === 'string');
-        if(nodesOk && linksOk) return d;
+        const ids = new Set();
+        const nodesOk = d.nodes.every(n=>{
+          if(!n || typeof n.id !== 'string' || !n.id || ids.has(n.id)) return false;
+          ids.add(n.id);
+          return true;
+        });
+        if(nodesOk){
+          d.links=d.links.filter(l=>l && ids.has(l.from) && ids.has(l.to));
+          return d;
+        }
       }
     }
   }catch(e){}
@@ -301,7 +330,24 @@ let drag=null, link=null, tempPath=null;
 let pan=null;
 const view={x:0,y:0,scale:1};
 const MIN_ZOOM=0.5, MAX_ZOOM=2.2, ZOOM_STEP=0.12;
+const touchPoints=new Map();
+const pointerPositions=new Map();
+let pinch=null;
+let pinchGesture=false;
 
+function clamp(v,min,max){ return Math.min(max, Math.max(min, v)); }
+function rememberPointer(ev){
+  if(!(ev.type==='pointerup' && ev.clientX===0 && ev.clientY===0)){
+    pointerPositions.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
+  }
+  if(ev.type==='pointerup' || ev.type==='pointercancel'){
+    setTimeout(()=>pointerPositions.delete(ev.pointerId),0);
+  }
+}
+window.addEventListener('pointerdown',rememberPointer,true);
+window.addEventListener('pointermove',rememberPointer,true);
+window.addEventListener('pointerup',rememberPointer,true);
+window.addEventListener('pointercancel',rememberPointer,true);
 function screenToWorld(ev){
   const r=stage.getBoundingClientRect();
   const sx=ev.clientX-r.left;
@@ -322,15 +368,95 @@ function onNodeDown(ev,n){
   ev.stopPropagation();
   selNode=n; selLink=null; markWires(); renderPanel();
   const start=screenToWorld(ev);
-  drag={n, ptrStart:start, posStart:{x:n.x,y:n.y}};
+  drag={n, pointerId:ev.pointerId, ptrStart:start, posStart:{x:n.x,y:n.y}};
   // 把指针捕获到这个节点元素上（而不是 stage），失败就吞掉，避免拖拽在边界卡死
   try{ const el=elMap.get(n.id); if(el&&el.setPointerCapture) el.setPointerCapture(ev.pointerId); }catch(_){ }
   if(ev.cancelable) ev.preventDefault();
 }
 function endDrag(){ if(drag){ save(); drag=null; } }
 function endLink(){ if(link){ link=null; tempPath&&tempPath.remove(); tempPath=null; } }
+function updateTouchPoints(ev){
+  if(ev.pointerType==='touch') touchPoints.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
+}
+function beginPinch(){
+  if(touchPoints.size<2) return;
+  const pts=[...touchPoints.values()];
+  const dx=pts[1].x-pts[0].x, dy=pts[1].y-pts[0].y;
+  const r=stage.getBoundingClientRect();
+  pinch={
+    startScale:view.scale,
+    startDist:Math.hypot(dx,dy)||1,
+    center:{x:(pts[0].x+pts[1].x)/2-r.left, y:(pts[0].y+pts[1].y)/2-r.top},
+    startView:{x:view.x,y:view.y}
+  };
+}
+function updatePinch(){
+  if(!pinch || touchPoints.size<2) return;
+  const pts=[...touchPoints.values()];
+  const dx=pts[1].x-pts[0].x, dy=pts[1].y-pts[0].y;
+  const dist=Math.hypot(dx,dy)||1;
+  const ratio=dist / pinch.startDist;
+  const nextScale=clamp(pinch.startScale * ratio, MIN_ZOOM, MAX_ZOOM);
+  const r=stage.getBoundingClientRect();
+  const cx=(pts[0].x+pts[1].x)/2-r.left;
+  const cy=(pts[0].y+pts[1].y)/2-r.top;
+  const wx=(pinch.center.x-pinch.startView.x)/pinch.startScale;
+  const wy=(pinch.center.y-pinch.startView.y)/pinch.startScale;
+  view.scale=nextScale;
+  view.x=cx-wx*nextScale;
+  view.y=cy-wy*nextScale;
+  applyView();
+}
+stage.addEventListener('pointerdown',ev=>{
+  if(ev.pointerType!=='touch') return;
+  updateTouchPoints(ev);
+  if(touchPoints.size>=2){
+    pinchGesture=true;
+    pinch=null;
+    pan=null;
+    endDrag();
+    endLink();
+    beginPinch();
+    ev.preventDefault();
+    ev.stopPropagation();
+  }
+},true);
+stage.addEventListener('pointermove',ev=>{
+  if(!pinchGesture || !touchPoints.has(ev.pointerId)) return;
+  updateTouchPoints(ev);
+  if(touchPoints.size>=2){
+    if(!pinch) beginPinch();
+    updatePinch();
+  }
+  ev.preventDefault();
+  ev.stopPropagation();
+},true);
+function finishTouchGesture(ev){
+  if(ev.pointerType!=='touch' || !touchPoints.has(ev.pointerId)) return;
+  touchPoints.delete(ev.pointerId);
+  if(pinchGesture){
+    pinch=null;
+    if(touchPoints.size===1){
+      pinchGesture=false;
+      const remaining=touchPoints.values().next().value;
+      const pointerId=touchPoints.keys().next().value;
+      pan={pointerId, sx:remaining.x, sy:remaining.y, ox:view.x, oy:view.y};
+      stage.style.cursor='grabbing';
+    }else{
+      pinchGesture=false;
+      pan=null;
+      stage.style.cursor='';
+    }
+    drag=null;
+    ev.preventDefault();
+    ev.stopPropagation();
+  }
+}
+stage.addEventListener('pointerup',finishTouchGesture,true);
+stage.addEventListener('pointercancel',finishTouchGesture,true);
 stage.addEventListener('pointermove',ev=>{
   if(pan){
+    if(ev.pointerId!==pan.pointerId) return;
     const dx=ev.clientX-pan.sx;
     const dy=ev.clientY-pan.sy;
     view.x=pan.ox+dx;
@@ -356,19 +482,23 @@ stage.addEventListener('pointermove',ev=>{
   }
 });
 stage.addEventListener('pointerup',ev=>{
-  if(pan){ pan=null; stage.style.cursor=''; return; }
-  if(link){ finishLink(ev); return; }
-  endDrag();
+  if(pan && ev.pointerId===pan.pointerId){ pan=null; stage.style.cursor=''; return; }
+  if(link && ev.pointerId===link.pointerId){ finishLink(ev); return; }
+  if(drag && ev.pointerId===drag.pointerId) endDrag();
 });
 // 触摸设备上拖拽会被系统手势接管，浏览器只会发 pointercancel 而不是 pointerup；
 // 不处理它，drag/link 会永远挂着 —— 表现就是「抓住了松不开」。这是本次要修的核心 bug。
-stage.addEventListener('pointercancel',ev=>{ pan=null; stage.style.cursor=''; endLink(); endDrag(); });
+stage.addEventListener('pointercancel',ev=>{
+  if(pan && ev.pointerId===pan.pointerId){ pan=null; stage.style.cursor=''; }
+  if(link && ev.pointerId===link.pointerId) endLink();
+  if(drag && ev.pointerId===drag.pointerId) endDrag();
+});
 nodeLayer.addEventListener('pointerdown',ev=>{
   const port=ev.target.closest('.port');
   if(!port) return;
   ev.stopPropagation(); ev.preventDefault();
   const id=port.closest('.node').dataset.id;
-  link={fromId:id, fromPort:port.dataset.port, cur:localPt(ev)};
+  link={fromId:id, fromPort:port.dataset.port, pointerId:ev.pointerId, cur:localPt(ev)};
   tempPath=document.createElementNS('http://www.w3.org/2000/svg','path');
   tempPath.setAttribute('class','wire'); tempPath.style.stroke='var(--accent)';
   tempSvg.appendChild(tempPath);
@@ -376,7 +506,10 @@ nodeLayer.addEventListener('pointerdown',ev=>{
 function finishLink(ev){
   tempPath&&tempPath.remove(); tempPath=null;
   const L=link; link=null;
-  const backToported=document.elementFromPoint(ev.clientX,ev.clientY);
+  const point=ev.clientX===0&&ev.clientY===0
+    ? pointerPositions.get(L.pointerId)||{x:ev.clientX,y:ev.clientY}
+    : {x:ev.clientX,y:ev.clientY};
+  const backToported=document.elementFromPoint(point.x,point.y);
   const pel=backToported&&backToported.closest('.port');
   if(!pel) return;
   const dstId=pel.closest('.node').dataset.id, dstPort=pel.dataset.port;
@@ -398,7 +531,7 @@ stage.addEventListener('pointerdown',ev=>{
   if(ev.target===stage||ev.target===nodeLayer||ev.target===wiresSvg||ev.target===tempSvg){
     selNode=null; selLink=null; renderPanel();
     elMap.forEach(el=>el.classList.remove('sel')); markWires();
-    pan={sx:ev.clientX, sy:ev.clientY, ox:view.x, oy:view.y};
+    pan={pointerId:ev.pointerId, sx:ev.clientX, sy:ev.clientY, ox:view.x, oy:view.y};
     stage.style.cursor='grabbing';
     try{ stage.setPointerCapture(ev.pointerId); }catch(_){ }
   }
@@ -424,6 +557,52 @@ function flashMsg(t){
     '<div class="alert warn" id="__f">'+t+'</div>');
   setTimeout(()=>{const e=document.getElementById('__f'); if(e)e.remove();},1800);
 }
+let toastTimer=null, dialogResolve=null;
+function showToast(message){
+  const toast=document.getElementById('toast');
+  toast.textContent=message;
+  toast.hidden=false;
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>{ toast.hidden=true; },2800);
+}
+function askConfirm(message){
+  if(dialogResolve) dialogResolve(false);
+  const dialog=document.getElementById('dialog');
+  const messageEl=document.getElementById('dialogMessage');
+  const confirmBtn=document.getElementById('dialogConfirm');
+  const cancelBtn=document.getElementById('dialogCancel');
+  messageEl.textContent=message;
+  dialog.hidden=false;
+  return new Promise(resolve=>{
+    dialogResolve=resolve;
+    const finish=result=>{
+      dialog.hidden=true;
+      dialogResolve=null;
+      confirmBtn.removeEventListener('click',onConfirm);
+      cancelBtn.removeEventListener('click',onCancel);
+      dialog.removeEventListener('click',onBackdrop);
+      document.removeEventListener('keydown',onKeyDown);
+      resolve(result);
+    };
+    const onConfirm=()=>finish(true);
+    const onCancel=()=>finish(false);
+    const onBackdrop=ev=>{ if(ev.target===dialog) finish(false); };
+    const onKeyDown=ev=>{ if(ev.key==='Escape') finish(false); };
+    confirmBtn.addEventListener('click',onConfirm);
+    cancelBtn.addEventListener('click',onCancel);
+    dialog.addEventListener('click',onBackdrop);
+    document.addEventListener('keydown',onKeyDown);
+    confirmBtn.focus();
+  });
+}
+function applyTheme(theme){
+  if(theme==='light'||theme==='dark'){
+    document.documentElement.setAttribute('data-theme',theme);
+    return theme;
+  }
+  document.documentElement.removeAttribute('data-theme');
+  return null;
+}
 function renderPanel(){
   const p=document.getElementById('panel');
   if(!selNode&&!selLink){
@@ -435,7 +614,7 @@ function renderPanel(){
       '<b>新建</b>：双击空白处<br>'+
       '<b>断开</b>：单击连线，按 Delete 或点右侧删除<br>'+
       '<b>移动</b>：按住空白处拖动画布<br>'+
-      '<b>缩放</b>：滑动鼠标滚轮或双指搓动触控板</div>'+
+      '<b>缩放</b>：滑动鼠标滚轮或双指搓动</div>'+
       '<div class="legend"><b>颜色</b><br>'+
       '<span class="dot" style="background:var(--ok)"></span>余量充足<br>'+
       '<span class="dot" style="background:var(--warn)"></span>峰值接近上限<br>'+
@@ -484,12 +663,15 @@ function renderPanel(){
   document.getElementById('bnDel').onclick=delNode;
 }
 function select(n){ selNode=n; selLink=null; render(); }
-function delNode(){
-  if(!selNode||!confirm('删除「'+selNode.label+'」？相连的线会一起删掉。')) return;
-  const id=selNode.id;
+async function delNode(){
+  if(!selNode) return;
+  const node=selNode;
+  if(!await askConfirm('删除「'+node.label+'」？相连的线会一起删掉。')) return;
+  const id=node.id;
   data.links=data.links.filter(l=>l.from!==id&&l.to!==id);
   data.nodes=data.nodes.filter(n=>n.id!==id);
-  selNode=null; render();
+  if(selNode===node) selNode=null;
+  render();
 }
 function delLink(){
   if(!selLink) return;
@@ -524,11 +706,13 @@ document.getElementById('fileIn').onchange=e=>{
       const d=JSON.parse(rd.result);
       if(!d||!Array.isArray(d.nodes)) throw new Error('缺少 nodes 数组');
       d.links=d.links||[];
+      d.theme=d.theme==='light'||d.theme==='dark'?d.theme:null;
       data=d; selNode=null; selLink=null;
       elMap.forEach(el=>el.remove()); elMap.clear();
       wireMap.forEach(o=>{o.vis.remove();o.hit.remove();}); wireMap.clear();
-      save(); render(); alert('导入成功');
-    }catch(err){ alert('这个文件读不了：'+err.message); }
+      applyTheme(data.theme);
+      save(); render(); showToast('导入成功');
+    }catch(err){ showToast('这个文件读不了：'+err.message); }
   };
   rd.readAsText(f);
   e.target.value='';
@@ -540,9 +724,10 @@ document.getElementById('fileIn').onchange=e=>{
     if(!d || !Array.isArray(d.nodes)) throw new Error('缺少 nodes 数组');
     if(!Array.isArray(d.links)) d.links = [];
 
-    const ids = new Set(d.nodes.map(n => n && n.id));
+    const ids = new Set()
     for(const n of d.nodes){
-      if(!n || typeof n !== 'object' || typeof n.id !== 'string' || !ids.has(n.id)) throw new Error('节点数据格式不正确');
+      if(!n || typeof n !== 'object' || typeof n.id !== 'string' || !n.id || ids.has(n.id)) throw new Error('节点数据格式不正确');
+      ids.add(n.id);
     }
     for(const l of d.links){
       if(!l || !ids.has(l.from) || !ids.has(l.to)) throw new Error('连线引用了不存在的节点');
@@ -557,8 +742,8 @@ document.getElementById('fileIn').onchange=e=>{
   rd.readAsText(f);
   e.target.value='';
 };
-document.getElementById('btnReset').onclick=()=>{
-  if(!confirm('恢复示例？当前所有修改会丢失。')) return;
+document.getElementById('btnReset').onclick=async()=>{
+  if(!await askConfirm('恢复示例？当前所有修改会丢失。')) return;
   const th=data.theme;
   elMap.forEach(el=>el.remove()); elMap.clear();
   wireMap.forEach(o=>{o.vis.remove();o.hit.remove();}); wireMap.clear();
@@ -566,10 +751,10 @@ document.getElementById('btnReset').onclick=()=>{
 };
 document.getElementById('btnTheme').onclick=()=>{
   const t=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';
-  document.documentElement.setAttribute('data-theme',t); data.theme=t; save();
+  data.theme=applyTheme(t); save();
 };
 
-if(data.theme) document.documentElement.setAttribute('data-theme',data.theme);
+applyTheme(data.theme);
 render();
 </script>
 </body>
