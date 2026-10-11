@@ -1,12 +1,18 @@
-## Visual-editor-for-power-supply-trees-tauri
+# Visual-editor-for-power-supply-trees-tauri
 
 用Tauri2给学长的项目写了个壳子，变成可安装软件包或单文件.exe
 
-可能给graph.html修了 [KnownIssues](./KNOWN_ISSUES.md) P0.②的问题
+## 修改内容
+
+1.可能给graph.html修了 [KnownIssues](./KNOWN_ISSUES.md) P0.②的问题
+
+2.加了个画布空白处拖动
+
+3.打了个包
 
 编辑会自动存到 ``WebView`` 引擎的 ``LocalStorage`` (是不是和浏览器一个叫法我也不知道，反正能存)
 
-#### 以下为原版README.md
+## 以下为原版README.md
 
 # 电源树编辑器 · Power Tree Editor
 
