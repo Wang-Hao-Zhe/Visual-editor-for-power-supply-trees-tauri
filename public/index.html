@@ -297,11 +297,29 @@ function touch(n){
 }
 
 // ---------- 交互 ----------
-let drag=null, link=null, tempPath=null;
-function localPt(ev){
+let drag=null, link=null, tempPath=null;//加了个空白处左右拖动
+
+let pan=null;
+const view={x:0,y:0};
+function applyView(){
+  nodeLayer.style.transform='translate('+view.x+'px,'+view.y+'px)';
+  wiresSvg.style.transform='translate('+view.x+'px,'+view.y+'px)';
+  tempSvg.style.transform='translate('+view.x+'px,'+view.y+'px)';
+}
+
+/*function localPt(ev){
   const r=stage.getBoundingClientRect();
   return {x:ev.clientX-r.left+stage.scrollLeft, y:ev.clientY-r.top+stage.scrollTop};
+}*/
+//为了拖动而魔改
+function localPt(ev){
+  const r=stage.getBoundingClientRect();
+  return {
+    x: ev.clientX - r.left + stage.scrollLeft - view.x,
+    y: ev.clientY - r.top  + stage.scrollTop  - view.y
+  };
 }
+
 function onNodeDown(ev,n){
   // 落在端口上的按下要放行，让它冒泡到 nodeLayer 的连线逻辑；
   // 这里如果 stopPropagation 会把拖连线整个掐死（曾是这个原因导致连不了线）
@@ -333,12 +351,17 @@ stage.addEventListener('pointermove',ev=>{
   }
 });
 stage.addEventListener('pointerup',ev=>{
+  if(pan){ pan=null; stage.style.cursor=''; }//加拖动
   if(link){ finishLink(ev); return; }
   endDrag();
 });
 // 触摸设备上拖拽会被系统手势接管，浏览器只会发 pointercancel 而不是 pointerup；
 // 不处理它，drag/link 会永远挂着 —— 表现就是「抓住了松不开」。这是本次要修的核心 bug。
-stage.addEventListener('pointercancel',ev=>{ endLink(); endDrag(); });
+stage.addEventListener('pointercancel',ev=>{
+  endLink(); 
+  endDrag(); 
+  if(pan){ pan=null; stage.style.cursor='';} //加拖动
+});
 nodeLayer.addEventListener('pointerdown',ev=>{
   const port=ev.target.closest('.port');
   if(!port) return;
@@ -370,9 +393,29 @@ stage.addEventListener('dblclick',ev=>{
   const n=N({label:'新节点',x:p.x-90,y:p.y-30});
   data.nodes.push(n); render(); select(n);
 });
+/*
 stage.addEventListener('pointerdown',ev=>{
   if(ev.target===stage||ev.target===nodeLayer){ selNode=null; selLink=null; renderPanel();
     elMap.forEach(el=>el.classList.remove('sel')); markWires(); }
+});
+*/
+//依旧加拖动，10.11
+
+if(pan){
+  view.x=pan.ox+(ev.clientX-pan.sx);
+  view.y=pan.oy+(ev.clientY-pan.sy);
+  applyView();
+  return;
+}
+
+stage.addEventListener('pointerdown',ev=>{
+  if(ev.target===stage||ev.target===nodeLayer||ev.target===wiresSvg||ev.target===tempSvg){
+    selNode=null; selLink=null; renderPanel();
+    elMap.forEach(el=>el.classList.remove('sel')); markWires();
+    pan={sx:ev.clientX, sy:ev.clientY, ox:view.x, oy:view.y};
+    stage.style.cursor='grabbing';
+    try{ stage.setPointerCapture(ev.pointerId); }catch(_){}
+  }
 });
 
 // ---------- 面板 ----------
