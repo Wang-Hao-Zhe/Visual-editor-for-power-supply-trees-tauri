@@ -1,14 +1,13 @@
 name: Build all packages
 
 on:
+  push:
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. 0.1.0)'
+        description: 'Release version (e.g. 0.2.0)'
         required: true
-      
-  push:
-    tags: ['v*']
 
 permissions:
   contents: write
@@ -17,21 +16,26 @@ jobs:
   linux:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with: { node-version: 22, cache: npm }
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with: { workspaces: "src-tauri -> target" }
+        with:
+          workspaces: "src-tauri -> target"
       - run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm libfuse2
       - run: npm install
       - run: mkdir -p public && npm run build:public
       - run: npx tauri build --bundles deb,appimage,rpm
-      - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref_name }}
           files: |
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage
@@ -40,72 +44,106 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with: { node-version: 22, cache: npm }
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with: { workspaces: "src-tauri -> target" }
+        with:
+          workspaces: "src-tauri -> target"
       - run: npm install
       - shell: bash
         run: mkdir -p public && npm run build:public
       - run: npx tauri build --bundles nsis
-      - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref_name }}
           files: src-tauri/target/release/bundle/nsis/*.exe
 
   macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with: { node-version: 22, cache: npm }
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with: { workspaces: "src-tauri -> target" }
+        with:
+          workspaces: "src-tauri -> target"
       - run: npm install
       - run: mkdir -p public && npm run build:public
       - run: npx tauri build --bundles dmg
-      - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref_name }}
           files: src-tauri/target/release/bundle/dmg/*.dmg
 
   android:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
+        with:
+          node-version: 22
+          cache: npm
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: '17' }
-
+        with:
+          distribution: temurin
+          java-version: '17'
       - uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools platforms;android-34 build-tools;34.0.0 ndk;29.0.13846066'
-
       - uses: dtolnay/rust-toolchain@stable
-        with: { targets: aarch64-linux-android }
       - uses: Swatinem/rust-cache@v2
-        with: { workspaces: "src-tauri -> target" }
+        with:
+          workspaces: "src-tauri -> target"
 
       - run: npm install
       - run: mkdir -p public && npm run build:public
 
-      - name: tauri android init
+      - name: Build APK
+        run: npx tauri android build --apk
+
+      - name: Sign APK
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/29.0.13846066
-        run: npx tauri android init
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          APK_DIR="src-tauri/gen/android/app/build/outputs/apk/universal/release"
+          UNSIGNED_APK=$(find "$APK_DIR" -name '*release-unsigned.apk' | head -n1)
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.keystore
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/34.0.0"
+          "$BUILD_TOOLS/zipalign" -p 4 "$UNSIGNED_APK" "$APK_DIR/aligned.apk"
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks release.keystore \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass pass:"$ANDROID_KEYSTORE_PASSWORD" \
+            --key-pass pass:"$ANDROID_KEY_PASSWORD" \
+            --out "$APK_DIR/app-universal-release.apk" \
+            "$APK_DIR/aligned.apk"
 
-      - name: build apk
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/29.0.13846066
-        run: npx tauri android build --apk --target aarch64
-
-      - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: src-tauri/gen/android/app/build/outputs/apk/arm64-v8a/release/*.apk
+          name: android-apk
+          path: src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref_name }}
+          files: src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
