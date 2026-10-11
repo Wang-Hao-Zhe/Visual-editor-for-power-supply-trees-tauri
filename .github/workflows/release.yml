@@ -75,25 +75,35 @@ jobs:
         with: { node-version: 22, cache: npm }
       - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: '17' }
-      - uses: android-actions/setup-android@v5
-        with:
-          packages: 'platform-tools platforms;android-34 build-tools;34.0.0 ndk;29.0.13846066'
+
+      # 不写 android-actions/setup-android，避免任何默认 tools 逻辑
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: aarch64-linux-android }
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: "src-tauri -> target" }
+
+      - name: Install Android components
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;29.0.13846066"
+
       - run: npm install
       - run: mkdir -p public && npm run build:public
+
       - name: tauri android init
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/29.0.13846066
         run: npx tauri android init
+
       - name: build apk
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/29.0.13846066
         run: npx tauri android build --apk --target aarch64 -- --no-daemon --console=plain
+
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
