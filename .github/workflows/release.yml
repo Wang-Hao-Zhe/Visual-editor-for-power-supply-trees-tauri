@@ -2,6 +2,11 @@ name: Build all packages
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 0.1.0)'
+        required: true
+      
   push:
     tags: ['v*']
 
