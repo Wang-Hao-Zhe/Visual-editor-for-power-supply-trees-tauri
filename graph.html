@@ -288,7 +288,7 @@ function render(){
   const alive=new Set(data.nodes.map(n=>n.id));
   elMap.forEach((el,id)=>{ if(!alive.has(id)){ el.remove(); elMap.delete(id); } });
   data.nodes.forEach(n=>{ const el=elMap.get(n.id); if(el) applyNode(el,n); else createEl(n); });
-  redrawWires(); renderPanel(); save();
+  redrawWires(); renderPanel(); applyView(); save();
 }
 // 只刷一个方块（输入时调用，避免重建面板丢焦点）
 function touch(n){
@@ -299,30 +299,43 @@ function touch(n){
 // ---------- 交互 ----------
 let drag=null, link=null, tempPath=null;
 let pan=null;
-function localPt(ev){
+const view={x:0,y:0,scale:1};
+const MIN_ZOOM=0.5, MAX_ZOOM=2.2, ZOOM_STEP=0.12;
+
+function screenToWorld(ev){
   const r=stage.getBoundingClientRect();
-  return {x:ev.clientX-r.left+stage.scrollLeft, y:ev.clientY-r.top+stage.scrollTop};
+  const sx=ev.clientX-r.left;
+  const sy=ev.clientY-r.top;
+  return {x:(sx-view.x)/view.scale, y:(sy-view.y)/view.scale};
 }
+function applyView(){
+  [nodeLayer,wiresSvg,tempSvg].forEach(el=>{ el.style.transformOrigin='0 0'; });
+  nodeLayer.style.transform='translate('+view.x+'px,'+view.y+'px) scale('+view.scale+')';
+  wiresSvg.style.transform='translate('+view.x+'px,'+view.y+'px) scale('+view.scale+')';
+  tempSvg.style.transform='translate('+view.x+'px,'+view.y+'px) scale('+view.scale+')';
+}
+function localPt(ev){ return screenToWorld(ev); }
 function onNodeDown(ev,n){
   // 落在端口上的按下要放行，让它冒泡到 nodeLayer 的连线逻辑；
   // 这里如果 stopPropagation 会把拖连线整个掐死（曾是这个原因导致连不了线）
   if(ev.target.closest('.port')) return;
   ev.stopPropagation();
   selNode=n; selLink=null; markWires(); renderPanel();
-  drag={n, sx:ev.clientX, sy:ev.clientY, ox:n.x, oy:n.y};
+  const start=screenToWorld(ev);
+  drag={n, ptrStart:start, posStart:{x:n.x,y:n.y}};
   // 把指针捕获到这个节点元素上（而不是 stage），失败就吞掉，避免拖拽在边界卡死
-  try{ const el=elMap.get(n.id); if(el&&el.setPointerCapture) el.setPointerCapture(ev.pointerId); }catch(_){}
+  try{ const el=elMap.get(n.id); if(el&&el.setPointerCapture) el.setPointerCapture(ev.pointerId); }catch(_){ }
   if(ev.cancelable) ev.preventDefault();
 }
 function endDrag(){ if(drag){ save(); drag=null; } }
 function endLink(){ if(link){ link=null; tempPath&&tempPath.remove(); tempPath=null; } }
 stage.addEventListener('pointermove',ev=>{
   if(pan){
-    const dx=ev.clientX-pan.sx, dy=ev.clientY-pan.sy;
-    if(!pan.moved && Math.hypot(dx,dy)<4) return;
-    pan.moved=true;
-    stage.scrollLeft=pan.sl-dx;
-    stage.scrollTop=pan.st-dy;
+    const dx=ev.clientX-pan.sx;
+    const dy=ev.clientY-pan.sy;
+    view.x=pan.ox+dx;
+    view.y=pan.oy+dy;
+    applyView();
     return;
   }
   if(link){
@@ -335,8 +348,9 @@ stage.addEventListener('pointermove',ev=>{
     return;
   }
   if(drag){
-    drag.n.x=Math.max(0,drag.ox+(ev.clientX-drag.sx));
-    drag.n.y=Math.max(0,drag.oy+(ev.clientY-drag.sy));
+    const p=screenToWorld(ev);
+    drag.n.x=Math.max(0,drag.posStart.x + (p.x - drag.ptrStart.x));
+    drag.n.y=Math.max(0,drag.posStart.y + (p.y - drag.ptrStart.y));
     const el=elMap.get(drag.n.id); if(el) el.style.transform='translate('+drag.n.x+'px,'+drag.n.y+'px)';
     refreshWiresOf(drag.n.id);
   }
@@ -381,14 +395,27 @@ stage.addEventListener('dblclick',ev=>{
   data.nodes.push(n); render(); select(n);
 });
 stage.addEventListener('pointerdown',ev=>{
-  if(ev.target===stage||ev.target===nodeLayer){
+  if(ev.target===stage||ev.target===nodeLayer||ev.target===wiresSvg||ev.target===tempSvg){
     selNode=null; selLink=null; renderPanel();
     elMap.forEach(el=>el.classList.remove('sel')); markWires();
-    pan={sx:ev.clientX, sy:ev.clientY, sl:stage.scrollLeft, st:stage.scrollTop, moved:false};
+    pan={sx:ev.clientX, sy:ev.clientY, ox:view.x, oy:view.y};
     stage.style.cursor='grabbing';
-    if(ev.cancelable) ev.preventDefault();
+    try{ stage.setPointerCapture(ev.pointerId); }catch(_){ }
   }
 });
+stage.addEventListener('wheel',ev=>{
+  ev.preventDefault();
+  const r=stage.getBoundingClientRect();
+  const px=ev.clientX-r.left;
+  const py=ev.clientY-r.top;
+  const wx=(px-view.x)/view.scale;
+  const wy=(py-view.y)/view.scale;
+  const nextScale=Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, view.scale * (ev.deltaY>0 ? 1-ZOOM_STEP : 1+ZOOM_STEP)));
+  view.scale=nextScale;
+  view.x=px-wx*nextScale;
+  view.y=py-wy*nextScale;
+  applyView();
+}, {passive:false});
 
 // ---------- 面板 ----------
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
@@ -406,7 +433,9 @@ function renderPanel(){
       '<b>起点</b>：没有入线的方块就是起点；把它的入线删掉它就变起点，再连回去就变回子节点<br>'+
       '<b>摆放</b>：拖方块；乱了点顶部「整理版面」<br>'+
       '<b>新建</b>：双击空白处<br>'+
-      '<b>断开</b>：单击连线，按 Delete 或点右侧删除</div>'+
+      '<b>断开</b>：单击连线，按 Delete 或点右侧删除<br>'+
+      '<b>移动</b>：按住空白处拖动画布<br>'+
+      '<b>缩放</b>：滑动鼠标滚轮或双指搓动触控板</div>'+
       '<div class="legend"><b>颜色</b><br>'+
       '<span class="dot" style="background:var(--ok)"></span>余量充足<br>'+
       '<span class="dot" style="background:var(--warn)"></span>峰值接近上限<br>'+
