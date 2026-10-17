@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. 0.2.0)'
+        description: 'Release version (e.g. 0.1.0, 不要带 v)'
         required: true
 
 permissions:
@@ -25,21 +25,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "src-tauri -> target"
-      - run: |
+      - name: Install system dependencies
+        run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm libfuse2
-      - run: npm install
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm libfuse2
+      - run: npm install   # 如果项目里有 package-lock.json，请改成 npm ci
       - run: mkdir -p public && npm run build:public
-      - run: npx tauri build --bundles deb,appimage,rpm
-      - name: Release
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+      - name: Build Tauri
+        run: npx tauri build --bundles deb,appimage,rpm
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref_name }}
-          files: |
+          name: linux-bundles
+          path: |
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage
             src-tauri/target/release/bundle/rpm/*.rpm
+          if-no-files-found: error
 
   windows:
     runs-on: windows-latest
@@ -56,13 +58,14 @@ jobs:
       - run: npm install
       - shell: bash
         run: mkdir -p public && npm run build:public
-      - run: npx tauri build --bundles nsis
-      - name: Release
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+      - name: Build Tauri
+        run: npx tauri build --bundles nsis
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref_name }}
-          files: src-tauri/target/release/bundle/nsis/*.exe
+          name: windows-bundles
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
 
   macos:
     runs-on: macos-latest
@@ -78,16 +81,20 @@ jobs:
           workspaces: "src-tauri -> target"
       - run: npm install
       - run: mkdir -p public && npm run build:public
-      - run: npx tauri build --bundles dmg
-      - name: Release
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+      - name: Build Tauri
+        run: npx tauri build --bundles dmg
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref_name }}
-          files: src-tauri/target/release/bundle/dmg/*.dmg
+          name: macos-bundles
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
 
   android:
     runs-on: ubuntu-latest
+    # 将签名变量提升到 job 级别，解决 if 条件获取不到的问题
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -100,14 +107,17 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v4
         with:
-          packages: 'platform-tools platforms;android-34 build-tools;34.0.0 ndk;29.0.13846066'
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0 ndk;26.1.10909125' # 这里我换成了官方推荐的稳定 NDK，若你原项目强依赖原版本请改回
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "src-tauri -> target"
-
       - run: npm install
       - run: mkdir -p public && npm run build:public
+
+      # 必须的一步：生成 gen/android
+      - name: Init Android Project
+        run: npx tauri android init
 
       - name: Build APK
         run: npx tauri android build --apk
@@ -115,8 +125,6 @@ jobs:
       - name: Sign APK
         if: env.ANDROID_KEYSTORE_BASE64 != ''
         env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -124,8 +132,12 @@ jobs:
           set -euo pipefail
           APK_DIR="src-tauri/gen/android/app/build/outputs/apk/universal/release"
           UNSIGNED_APK=$(find "$APK_DIR" -name '*release-unsigned.apk' | head -n1)
+          if [ -z "$UNSIGNED_APK" ]; then
+            echo "::error::找不到未签名的 APK，请检查 tauri build 是否成功"
+            exit 1
+          fi
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.keystore
-          BUILD_TOOLS="$ANDROID_HOME/build-tools/34.0.0"
+          BUILD_TOOLS="${ANDROID_HOME}/build-tools/34.0.0" # 移除覆盖，直接使用系统配置的 ANDROID_HOME
           "$BUILD_TOOLS/zipalign" -p 4 "$UNSIGNED_APK" "$APK_DIR/aligned.apk"
           "$BUILD_TOOLS/apksigner" sign \
             --ks release.keystore \
@@ -135,15 +147,26 @@ jobs:
             --out "$APK_DIR/app-universal-release.apk" \
             "$APK_DIR/aligned.apk"
 
-      - name: Upload APK artifact
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: android-apk
           path: src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+          if-no-files-found: error
 
-      - name: Release
+  # 独立的发布节点，等所有平台跑完才执行
+  release:
+    needs: [linux, windows, macos, android]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true # 将分散的子目录打平，方便一步上传
+
+      - name: Publish Release
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref_name }}
-          files: src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+          files: artifacts/*
